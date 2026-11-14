@@ -1,0 +1,5 @@
+# Lobo-aranha rigado (Sketchfab: wolf spider, Rabidosa rabida). Clipes: walking, running (sem idle/climb/hit/death).
+# Copie o arquivo para assets/models/ e rode:  spiderdesk --config config/models/wolf_spider.toml
+[spider]
+model = "models/wolf_spider_rigged_-_rabidosa_rabida.glb"
+glb_yaw_deg = -90.0     # gira o modelo para a frente apontar para +X (valor achado por teste visual)

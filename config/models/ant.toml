@@ -1,0 +1,5 @@
+# Formiga andando (Sketchfab: walking_ant). Um unico clipe 'Take 001' vira walk.
+# Copie o arquivo para assets/models/ e rode:  spiderdesk --config config/models/ant.toml
+[spider]
+model = "models/walking_ant.glb"
+glb_yaw_deg = 0.0     # gira o modelo para a frente apontar para +X (valor achado por teste visual)

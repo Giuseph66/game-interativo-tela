@@ -1,0 +1,5 @@
+# Gafanhoto (Sketchfab: grasshopper). Um unico clipe 'Scene' vira walk.
+# Copie o arquivo para assets/models/ e rode:  spiderdesk --config config/models/grasshopper.toml
+[spider]
+model = "models/grasshopper.glb"
+glb_yaw_deg = 180.0     # gira o modelo para a frente apontar para +X (valor achado por teste visual)

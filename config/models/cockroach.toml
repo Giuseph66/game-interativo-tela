@@ -1,0 +1,5 @@
+# Barata americana (Sketchfab: american_cockroach_walk_cycle, 20 MB). Um unico clipe vira walk.
+# Copie o arquivo para assets/models/ e rode:  spiderdesk --config config/models/cockroach.toml
+[spider]
+model = "models/american_cockroach_walk_cycle.glb"
+glb_yaw_deg = 90.0     # gira o modelo para a frente apontar para +X (valor achado por teste visual)

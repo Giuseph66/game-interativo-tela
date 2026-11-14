@@ -1,0 +1,5 @@
+# Rato (Rat.glb). Clipes: idle, attack (ignorado), dead, walk.
+# Copie o arquivo para assets/models/ e rode:  spiderdesk --config config/models/rat.toml
+[spider]
+model = "models/Rat.glb"
+glb_yaw_deg = 90.0     # gira o modelo para a frente apontar para +X (valor achado por teste visual)

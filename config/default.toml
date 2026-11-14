@@ -1,0 +1,57 @@
+# SpiderDesk - configuracao padrao.
+# Todos os campos sao opcionais; o que faltar assume o valor abaixo.
+# Uso: spiderdesk --config caminho/para/arquivo.toml
+
+[overlay]
+fps_limit = 60                    # FPS maximo enquanto ha movimento
+idle_update_hz = 20.0             # taxa quando a aranha esta parada e o cursor longe
+hidden_update_hz = 4.0            # taxa quando a aranha esta invisivel (morta)
+bottom_inset_px = 1               # px removidos da altura (evita fullscreen otimizado)
+emergency_hotkey = "ctrl+alt+shift+q"   # encerra o app de qualquer lugar
+watchdog_secs = 5.0               # laco travado por mais que isso => processo encerra
+backend = "auto"                  # auto | dx12 | vulkan (DX12 e necessario p/ transparencia no Windows)
+msaa_samples = 1                  # 1 (off), 2 ou 4
+layered_alpha_fix = false         # Windows: remedio se o overlay sumir ao passar o cursor na aranha
+hit_hysteresis = 1.1              # histerese: com o cursor entre raio e raio*1.1 o clique ainda e capturado
+
+[spider]
+model = "models/spider.glb"       # relativo a assets/; se faltar usa a aranha procedural
+scale = 1.0
+hit_radius_px = 34.0              # raio do circulo clicavel
+walk_speed = 90.0                 # px/s
+run_speed = 260.0
+climb_speed = 60.0
+view_tilt_deg = 32.0              # inclinacao do dorso para a camera (efeito 3D)
+glb_yaw_deg = 0.0                 # ajuste de orientacao do modelo GLB
+glb_scale = 1.0                   # multiplica a escala automatica do modelo GLB
+glb_auto_fit = true               # mede o GLB e ajusta escala/posicao sozinho
+
+[behavior]
+detect_radius_px = 140.0          # distancia em que o cursor e percebido
+react_probability = 0.65          # chance de reagir ao cursor
+weight_flee = 5.0
+weight_freeze = 2.0
+weight_speedup = 2.0
+weight_reroute = 2.0
+react_cooldown_secs = 2.5
+idle_min_secs = 0.8
+idle_max_secs = 3.5
+pause_chance_per_sec = 0.12       # micro-pausas durante a caminhada
+flee_duration_secs = 2.2
+respawn_delay_secs = 15.0         # intervalo ate reaparecer
+death_anim_secs = 1.1
+seed = 0                          # 0 = aleatoria
+
+[navigation]
+window_poll_ms = 300              # periodo de consulta das janelas
+link_distance_px = 14.0           # distancia p/ ligar bordas de janelas diferentes
+min_window_size_px = 120.0
+min_segment_px = 24.0
+screen_edges = true               # perimetro da tela como caminho
+debug_draw = false
+
+[game]
+points_per_kill = 100
+
+[diagnostics]
+metrics_interval_secs = 30.0      # 0 = desliga o log de metricas
