@@ -6,7 +6,7 @@ use std::time::Instant;
 use bevy::prelude::*;
 
 use crate::config::Config;
-use crate::creature::spider::SpiderSim;
+use crate::creature::spider::Mob;
 use crate::navigation::geometry::Rect;
 use crate::navigation::walker::Reattach;
 use crate::navigation::window_graph::{BuildParams, PathGraph};
@@ -74,7 +74,7 @@ pub fn poll_desktop(
     geo: Res<OverlayGeometry>,
     time: Res<Time<Real>>,
     mut desktop: ResMut<Desktop>,
-    mut sim: ResMut<SpiderSim>,
+    mut mobs: Query<&mut Mob>,
 ) {
     if !geo.ready {
         return;
@@ -132,14 +132,16 @@ pub fn poll_desktop(
         build_us
     );
 
-    // a aranha viaja com a janela em que esta e e reconciliada com o grafo novo
-    if sim.placed {
-        let new_windows = desktop.windows.clone();
-        sim.walker.follow_window(&old, &new_windows);
-        match sim.walker.reattach(&desktop.graph, 24.0) {
+    // cada mob viaja com a janela em que esta e e reconciliado com o grafo novo
+    for mut mob in &mut mobs {
+        if !mob.sim.placed {
+            continue;
+        }
+        mob.sim.walker.follow_window(&old, &desktop.windows);
+        match mob.sim.walker.reattach(&desktop.graph, 24.0) {
             Reattach::Kept => {}
-            Reattach::Snapped(_) => debug!("rota invalidada; aranha reposicionada"),
-            Reattach::Falling => debug!("superficie sumiu; aranha em queda"),
+            Reattach::Snapped(_) => debug!("rota invalidada; mob reposicionado"),
+            Reattach::Falling => debug!("superficie sumiu; mob em queda"),
             Reattach::Lost => debug!("grafo sem superficies"),
         }
     }

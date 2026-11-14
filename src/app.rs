@@ -13,20 +13,19 @@ use bevy::winit::{UpdateMode, WinitSettings};
 
 use crate::capture::capture_if_requested;
 use crate::config::{BackendChoice, Config};
-use crate::creature::animation::BODY_HEIGHT;
 use crate::creature::effects::{EffectAssets, EffectsActive, update_particles};
-use crate::creature::glb::{GlbModel, drive_glb_animation, fit_glb_model, spawn_glb_when_ready};
-use crate::creature::procedural::{animate_procedural, spawn_procedural};
+use crate::creature::glb::{drive_glb_animation, fit_glb_model, spawn_pending_models};
+use crate::creature::procedural::{ProceduralAssets, animate_procedural};
 use crate::creature::spider::{
-    OverlayCamera, SpiderSim, debug_spider, read_click, spawn_death_effect, spawn_root,
-    spider_think, sync_spider_transform,
+    OverlayCamera, read_click, spawn_death_effect, spider_think, sync_spider_transform,
 };
+use crate::mobs::{MobCatalog, MobCommand, apply_mob_commands, discover_kinds, spawn_initial_mobs};
 use crate::desktop::{Desktop, poll_desktop};
 use crate::diagnostics::{Metrics, log_metrics};
 use crate::game::Score;
 use crate::navigation::geometry::Rect;
 use crate::overlay::{OverlayGeometry, OverlayPlugin, OverlaySet, RunOptions, window};
-use crate::{assets, platform, poc};
+use crate::{assets, panel, platform, poc};
 
 /// Argumentos de linha de comando.
 #[derive(Debug, Default, PartialEq)]
@@ -37,6 +36,7 @@ pub struct Cli {
     pub poc: bool,
     pub screenshot: Option<PathBuf>,
     pub auto_kill_secs: Option<f32>,
+    pub no_panel: bool,
     pub print_config: bool,
     pub help: bool,
 }
@@ -50,6 +50,7 @@ USO:
 OPCOES:
     --config <arquivo>   usa este TOML (padrao: config/default.toml, se existir)
     --poc                prova de conceito: cubo 3D transparente + click-through (sem aranha)
+    --no-panel           nao abre o painel flutuante de spawn de mobs
     --list-windows       imprime as janelas detectadas (bordas visiveis) e sai
     --timeout <segs>     encerra sozinho apos N segundos (testes)
     --screenshot <png>   salva um quadro renderizado (RGBA) com estatisticas de alfa e sai
@@ -97,6 +98,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
                 cli.auto_kill_secs = Some(v);
             }
             "--poc" => cli.poc = true,
+            "--no-panel" => cli.no_panel = true,
             "--list-windows" => cli.list_windows = true,
             "--print-config" => cli.print_config = true,
             "-h" | "--help" => cli.help = true,
@@ -161,6 +163,7 @@ pub fn run(cli: Cli) -> ExitCode {
         poc: cli.poc,
         screenshot: cli.screenshot,
         auto_kill_secs: cli.auto_kill_secs,
+        no_panel: cli.no_panel,
     };
     let exit = build_app(cfg, opts).run();
     match exit {
@@ -221,7 +224,7 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
                 ..default()
             })
             .set(AssetPlugin {
-                file_path: asset_root,
+                file_path: asset_root.clone(),
                 ..default()
             })
             .set(LogPlugin {
@@ -231,6 +234,14 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
     );
 
     let seed = cfg.behavior.seed;
+    let presets_dir = assets::find_default_config()
+        .and_then(|p| p.parent().map(|d| d.join("models")));
+    let (kinds, default_kind) = discover_kinds(
+        Some(std::path::Path::new(&asset_root)),
+        presets_dir.as_deref(),
+        &cfg,
+    );
+    let catalog = MobCatalog::new(kinds, default_kind, seed);
     let poc_mode = opts.poc;
     let fps = cfg.overlay.fps_limit as f32;
 
@@ -252,12 +263,13 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
         .insert_resource(cfg)
         .insert_resource(opts)
         .insert_resource(Desktop::default())
-        .insert_resource(SpiderSim::new(seed))
+        .insert_resource(catalog)
         .insert_resource(Score::default())
         .insert_resource(EffectsActive::default())
         .insert_resource(Metrics::default())
         .add_plugins(OverlayPlugin)
-        .add_systems(Startup, setup_scene)
+        .add_message::<MobCommand>()
+        .add_systems(Startup, (setup_scene, spawn_initial_mobs, panel::spawn_panel).chain())
         .add_systems(
             Update,
             (
@@ -277,17 +289,22 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
             Update,
             (
                 poll_desktop,
+                apply_mob_commands,
+                spawn_pending_models,
                 read_click,
                 spider_think,
                 sync_spider_transform,
                 spawn_death_effect,
-                debug_spider,
                 animate_procedural,
-                spawn_glb_when_ready.run_if(resource_exists::<GlbModel>),
-                fit_glb_model.run_if(resource_exists::<GlbModel>),
-                drive_glb_animation.run_if(resource_exists::<GlbModel>),
+                fit_glb_model,
+                drive_glb_animation,
             )
                 .chain()
+                .in_set(OverlaySet::Game),
+        )
+        .add_systems(
+            Update,
+            (panel::fit_panel, panel::update_status, panel::button_colors)
                 .in_set(OverlaySet::Game),
         );
     }
@@ -298,7 +315,6 @@ fn setup_scene(
     mut commands: Commands,
     cfg: Res<Config>,
     opts: Res<RunOptions>,
-    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -333,27 +349,9 @@ fn setup_scene(
     ));
 
     commands.insert_resource(EffectAssets::new(&mut meshes, &mut materials));
-
+    commands.insert_resource(ProceduralAssets::new(&mut meshes, &mut materials));
     if opts.poc {
-        info!("modo PoC: cubo 3D (sem aranha)");
-        return;
-    }
-
-    let root = spawn_root(&mut commands);
-    let _ = BODY_HEIGHT;
-    match assets::find_asset(&cfg.spider.model) {
-        Some(path) => {
-            info!("carregando modelo {}", path.display());
-            let handle = asset_server.load(cfg.spider.model.clone());
-            commands.insert_resource(GlbModel::new(handle, root));
-        }
-        None => {
-            info!(
-                "{} nao encontrado: usando a aranha procedural (coloque o GLB em assets/models/)",
-                cfg.spider.model
-            );
-            spawn_procedural(&mut commands, root, &mut meshes, &mut materials);
-        }
+        info!("modo PoC: cubo 3D (sem mobs)");
     }
 }
 

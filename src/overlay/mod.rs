@@ -46,6 +46,8 @@ pub struct RunOptions {
     pub timeout_secs: Option<f32>,
     /// Modo prova de conceito: cubo 3D em vez da aranha.
     pub poc: bool,
+    /// Nao abre o painel flutuante.
+    pub no_panel: bool,
     /// Teste: simula um clique na aranha apos N segundos (e a cada reaparecimento).
     pub auto_kill_secs: Option<f32>,
     /// Salva um quadro renderizado (RGBA) neste arquivo e encerra.

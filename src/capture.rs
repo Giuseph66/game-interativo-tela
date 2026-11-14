@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 
-use crate::creature::spider::SpiderSim;
+use crate::creature::spider::Mob;
 use crate::overlay::{OverlayGeometry, RunOptions};
 
 #[derive(Default)]
@@ -20,7 +20,7 @@ pub fn capture_if_requested(
     mut commands: Commands,
     opts: Res<RunOptions>,
     geo: Res<OverlayGeometry>,
-    sim: Option<Res<SpiderSim>>,
+    mobs: Query<&Mob>,
     time: Res<Time<Real>>,
     mut state: Local<CaptureState>,
     mut exit: MessageWriter<AppExit>,
@@ -29,7 +29,7 @@ pub fn capture_if_requested(
         return;
     };
     let now = time.elapsed_secs();
-    let scene_ready = geo.ready && (opts.poc || sim.as_ref().is_some_and(|s| s.placed));
+    let scene_ready = geo.ready && (opts.poc || mobs.iter().any(|m| m.sim.placed));
     if state.ready_at.is_none() {
         if scene_ready {
             state.ready_at = Some(now);
@@ -42,9 +42,9 @@ pub fn capture_if_requested(
         commands
             .spawn(Screenshot::primary_window())
             .observe(move |cap: On<ScreenshotCaptured>| save_with_stats(&cap.image, &path));
-        if let Some(s) = &sim {
+        for s in mobs.iter().map(|m| &m.sim) {
             info!(
-                "estado da aranha na captura: {:?}, direcao {:.2},{:.2}, normal {:.2},{:.2}, velocidade {:.0} px/s",
+                "mob na captura: {:?}, direcao {:.2},{:.2}, normal {:.2},{:.2}, velocidade {:.0} px/s",
                 s.brain.state(),
                 s.walker.heading.x,
                 s.walker.heading.y,

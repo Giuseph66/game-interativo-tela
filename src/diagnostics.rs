@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 
 use crate::config::Config;
-use crate::creature::spider::SpiderSim;
+use crate::creature::spider::Mob;
 use crate::desktop::Desktop;
 use crate::overlay::Activity;
 
@@ -20,7 +20,7 @@ pub fn log_metrics(
     time: Res<Time<Real>>,
     activity: Res<Activity>,
     desktop: Option<Res<Desktop>>,
-    sim: Option<Res<SpiderSim>>,
+    mobs: Query<&Mob>,
     mut m: ResMut<Metrics>,
 ) {
     let dt_ms = time.delta_secs() * 1000.0;
@@ -55,12 +55,11 @@ pub fn log_metrics(
             )
         })
         .unwrap_or_default();
-    let state = sim
-        .as_ref()
-        .map(|s| format!("{:?}", s.brain.state()))
-        .unwrap_or_else(|| "-".into());
+    let n_mobs = mobs.iter().count();
+    let visible = mobs.iter().filter(|m| m.sim.visible).count();
+    let state = format!("{n_mobs} mobs ({visible} visiveis)");
     info!(
-        "metricas: {:.1} fps ({} quadros), frame medio {:.2} ms / max {:.2} ms, atividade {:?}, aranha {state}, \
+        "metricas: {:.1} fps ({} quadros), frame medio {:.2} ms / max {:.2} ms, atividade {:?}, {state}, \
          janelas {win}, grafo {nodes} nos/{edges} arestas, consultas {polls} (max {poll_us} us), \
          reconstrucoes {rebuilds} (max {build_us} us), memoria {mem}",
         m.frames as f32 / span,

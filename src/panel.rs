@@ -288,28 +288,18 @@ pub fn update_status(
     }
 }
 
-/// Realce visual de hover/press.
-#[allow(clippy::type_complexity)]
-pub fn button_colors(
-    mut buttons: Query<
-        (&Hovered, Has<Pressed>, &PanelButton, &mut BackgroundColor),
-        Or<(Changed<Hovered>, Added<Pressed>)>,
-    >,
-    mut released: RemovedComponents<Pressed>,
-    mut all: Query<(&Hovered, &PanelButton, &mut BackgroundColor), Without<Pressed>>,
-) {
+/// Realce visual de hover/press (poucos botoes: varre todos e so escreve quando muda).
+pub fn button_colors(mut buttons: Query<(&Hovered, Has<Pressed>, &PanelButton, &mut BackgroundColor)>) {
     for (hovered, pressed, base, mut bg) in &mut buttons {
-        bg.0 = if pressed {
+        let want = if pressed {
             BTN_PRESS
         } else if hovered.get() {
             BTN_HOVER
         } else {
             base.0
         };
-    }
-    for e in released.read() {
-        if let Ok((hovered, base, mut bg)) = all.get_mut(e) {
-            bg.0 = if hovered.get() { BTN_HOVER } else { base.0 };
+        if bg.0 != want {
+            bg.0 = want;
         }
     }
 }

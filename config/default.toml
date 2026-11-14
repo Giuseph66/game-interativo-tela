@@ -50,6 +50,11 @@ min_segment_px = 24.0
 screen_edges = true               # perimetro da tela como caminho
 debug_draw = false
 
+[mobs]
+initial = 1                       # mobs ao iniciar (tipo de spider.model ou a aranha procedural)
+max = 30                          # limite de mobs simultaneos
+panel = true                      # painel flutuante para spawnar mobs
+
 [game]
 points_per_kill = 100
 

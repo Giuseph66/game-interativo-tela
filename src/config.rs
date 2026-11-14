@@ -197,6 +197,27 @@ impl Default for NavigationConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct MobsConfig {
+    /// Quantos mobs aparecem ao iniciar (tipo: `spider.model`, se existir; senao a procedural).
+    pub initial: u32,
+    /// Limite de mobs simultaneos (protege CPU/GPU).
+    pub max: u32,
+    /// Mostra o painel flutuante de spawn.
+    pub panel: bool,
+}
+
+impl Default for MobsConfig {
+    fn default() -> Self {
+        Self {
+            initial: 1,
+            max: 30,
+            panel: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GameConfig {
     pub points_per_kill: u32,
 }
@@ -231,6 +252,7 @@ pub struct Config {
     pub spider: SpiderConfig,
     pub behavior: BehaviorConfig,
     pub navigation: NavigationConfig,
+    pub mobs: MobsConfig,
     pub game: GameConfig,
     pub diagnostics: DiagnosticsConfig,
 }
@@ -325,6 +347,9 @@ impl Config {
         ] {
             *w = w.clamp(0.0, 1000.0);
         }
+
+        self.mobs.max = self.mobs.max.clamp(1, 200);
+        self.mobs.initial = self.mobs.initial.min(self.mobs.max);
 
         let n = &mut self.navigation;
         n.window_poll_ms = n.window_poll_ms.clamp(50, 10_000);
