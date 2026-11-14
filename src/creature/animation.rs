@@ -8,14 +8,7 @@ use bevy::math::{Mat3, Quat, Vec2, Vec3};
 
 use super::behavior::SpiderState;
 
-/// Altura do centro do corpo acima da superficie (unidades locais).
-pub const BODY_HEIGHT: f32 = 0.55;
-/// Comprimento dos dois segmentos da perna.
-pub const LEG_UPPER: f32 = 0.60;
-pub const LEG_LOWER: f32 = 0.85;
-/// Amplitude do passo (unidades locais).
-pub const STRIDE: f32 = 0.7;
-/// Fracao do ciclo em que o pe esta apoiado no chao.
+/// Fracao padrao do ciclo em que o pe esta apoiado no chao.
 pub const STANCE_FRACTION: f32 = 0.6;
 
 // ----------------------------------------------------------------------------------------------
@@ -187,62 +180,54 @@ pub fn smooth_factor(rate: f32, dt: f32) -> f32 {
 // Pernas
 // ----------------------------------------------------------------------------------------------
 
+/// Repouso de uma perna (espaco local do corpo; o chao e y = 0).
 #[derive(Debug, Clone, Copy)]
 pub struct LegRest {
     /// Articulacao do quadril, no corpo.
     pub hip: Vec3,
-    /// Posicao de repouso do pe (no chao).
+    /// Posicao de repouso da ponta do pe (no chao).
     pub foot: Vec3,
-    /// Defasagem do ciclo (marcha de tetrapodes: 0.0 ou 0.5).
+    /// Defasagem do ciclo andando e correndo (voltas).
     pub phase_offset: f32,
+    pub phase_run: f32,
     /// +1 / -1: lado do corpo (eixo Z).
     pub side: f32,
+    /// Comprimento do femur e da tibia.
+    pub l1: f32,
+    pub l2: f32,
+    /// Para onde o joelho dobra.
+    pub pole: Vec3,
+    /// Vetor da ponta do pe ate o tornozelo (tarso apoiado); zero = sem tarso.
+    pub tarsus: Vec3,
+    /// Ponta do pe na pose de morte (pernas encolhidas).
+    pub curl: Vec3,
+    /// Raio de femur, tibia e tarso.
+    pub widths: [f32; 3],
+    /// Tinta de cada segmento.
+    pub paints: [u8; 3],
+    /// Raio da "patinha" na ponta (0 = nenhuma).
+    pub paw: f32,
 }
 
-/// 4 pernas por lado: marcha em tetrapodes (E1,D2,E3,D4 alternam com D1,E2,D3,E4).
-pub fn leg_layout() -> [LegRest; 8] {
-    let hip_x = [0.30, 0.11, -0.10, -0.30];
-    let foot_x = [0.75, 0.40, -0.30, -0.72];
-    let foot_z = [0.70, 0.90, 0.90, 0.72];
-    let mut out = [LegRest {
-        hip: Vec3::ZERO,
-        foot: Vec3::ZERO,
-        phase_offset: 0.0,
-        side: 1.0,
-    }; 8];
-    for (i, slot) in out.iter_mut().enumerate() {
-        let pair = i / 2;
-        let side = if i % 2 == 0 { 1.0 } else { -1.0 };
-        // lado + inicia em fase 0 nas pernas pares, lado - invertido
-        let alt = ((pair % 2) as f32 + if side > 0.0 { 0.0 } else { 1.0 }) % 2.0;
-        *slot = LegRest {
-            hip: Vec3::new(hip_x[pair], BODY_HEIGHT, 0.14 * side),
-            foot: Vec3::new(foot_x[pair], 0.0, foot_z[pair] * side),
-            phase_offset: alt * 0.5,
-            side,
-        };
-    }
-    out
-}
-
-/// Posicao do pe no espaco local para `phase` (qualquer real; usa a parte fracionaria).
-/// `stride` escala a amplitude (0 = pe parado no repouso), `lift` e a altura do passo.
-pub fn foot_position(leg: &LegRest, phase: f32, stride: f32, lift: f32) -> Vec3 {
-    let p = (phase + leg.phase_offset).rem_euclid(1.0);
-    let (dx, dy) = if p < STANCE_FRACTION {
+/// Deslocamento (frente, cima) da ponta do pe para `phase` (qualquer real; usa a parte
+/// fracionaria). `stride` escala a amplitude (0 = parado no repouso), `lift` e a altura do passo e
+/// `stance` a fracao do ciclo com o pe no chao.
+pub fn step_offset(phase: f32, stride: f32, lift: f32, stance: f32) -> Vec2 {
+    let stance = stance.clamp(0.05, 0.95);
+    let p = phase.rem_euclid(1.0);
+    if p < stance {
         // apoio: o pe anda para tras em relacao ao corpo, em linha reta
-        let u = p / STANCE_FRACTION;
-        (0.5 * stride - u * stride, 0.0)
+        let u = p / stance;
+        Vec2::new(0.5 * stride - u * stride, 0.0)
     } else {
         // balanco: sobe e volta para a frente (smoothstep + arco)
-        let u = (p - STANCE_FRACTION) / (1.0 - STANCE_FRACTION);
+        let u = (p - stance) / (1.0 - stance);
         let s = u * u * (3.0 - 2.0 * u);
-        (
+        Vec2::new(
             -0.5 * stride + s * stride,
             lift * (std::f32::consts::PI * u).sin(),
         )
-    };
-    leg.foot + Vec3::new(dx, dy, 0.0)
+    }
 }
 
 /// IK de duas juntas. Devolve (joelho, pe_efetivo). Se o alvo estiver fora do alcance, o pe e
@@ -263,21 +248,13 @@ pub fn two_bone_ik(hip: Vec3, target: Vec3, l1: f32, l2: f32, pole: Vec3) -> (Ve
     (hip + dir * a + perp * h, foot)
 }
 
-/// Pose de uma perna com dobra para cima/fora.
-pub fn leg_pose(leg: &LegRest, foot_target: Vec3) -> (Vec3, Vec3) {
-    let pole = Vec3::new(0.0, 1.0, 0.35 * leg.side);
-    two_bone_ik(leg.hip, foot_target, LEG_UPPER, LEG_LOWER, pole)
-}
-
-/// Pe "encolhido" da pose de morte (pernas fechadas sobre o corpo).
-pub fn curled_foot(leg: &LegRest) -> Vec3 {
-    Vec3::new(leg.hip.x * 1.4, BODY_HEIGHT + 0.5, leg.side * 0.38)
-}
-
 /// Frequencia do ciclo de marcha (Hz) para uma velocidade em unidades locais por segundo,
 /// de modo que o pe apoiado fique parado no chao (sem "patinar").
-pub fn gait_frequency(speed_units: f32) -> f32 {
-    STANCE_FRACTION * speed_units / STRIDE
+pub fn gait_frequency(speed_units: f32, stride: f32, stance: f32) -> f32 {
+    if stride <= 1e-4 {
+        return 0.0;
+    }
+    stance * speed_units / stride
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -490,92 +467,66 @@ mod tests {
 
     // --- pernas ---
 
-    #[test]
-    fn layout_has_alternating_tetrapod_gait() {
-        let l = leg_layout();
-        // 4 pernas por lado
-        assert_eq!(l.iter().filter(|x| x.side > 0.0).count(), 4);
-        // pernas vizinhas do mesmo lado nunca estao na mesma fase
-        for side in [1.0, -1.0] {
-            let same: Vec<&LegRest> = l.iter().filter(|x| x.side == side).collect();
-            for w in same.windows(2) {
-                assert_ne!(w[0].phase_offset, w[1].phase_offset);
-            }
-        }
-        // pernas opostas do mesmo par tambem alternam
-        for pair in l.chunks(2) {
-            assert_ne!(pair[0].phase_offset, pair[1].phase_offset);
-        }
-        // metade em cada grupo
-        assert_eq!(l.iter().filter(|x| x.phase_offset == 0.0).count(), 4);
-    }
+    const STRIDE: f32 = 0.7;
 
     #[test]
     fn feet_touch_the_ground_in_stance_and_lift_in_swing() {
-        let leg = leg_layout()[0];
         for i in 0..60 {
-            let phase = i as f32 / 60.0 - leg.phase_offset;
-            let p = (phase + leg.phase_offset).rem_euclid(1.0);
-            let foot = foot_position(&leg, phase, STRIDE, 0.3);
+            let p = i as f32 / 60.0;
+            let o = step_offset(p, STRIDE, 0.3, STANCE_FRACTION);
             if p < STANCE_FRACTION {
-                assert_eq!(foot.y, 0.0, "apoio no chao (p={p})");
+                assert_eq!(o.y, 0.0, "apoio no chao (p={p})");
             } else {
-                assert!(foot.y >= 0.0 && foot.y <= 0.3 + 1e-5);
+                assert!(o.y >= 0.0 && o.y <= 0.3 + 1e-5);
             }
         }
         // meio do balanco: altura maxima
-        let mid = foot_position(&leg, STANCE_FRACTION + 0.2 - leg.phase_offset, STRIDE, 0.3);
+        let mid = step_offset(STANCE_FRACTION + 0.2, STRIDE, 0.3, STANCE_FRACTION);
         assert!((mid.y - 0.3).abs() < 1e-3);
     }
 
     #[test]
     fn stance_foot_slides_backward_at_body_speed() {
-        // dentro do apoio, o pe se desloca -STRIDE ao longo de STANCE_FRACTION do ciclo
-        let leg = leg_layout()[2];
-        let a = foot_position(&leg, 0.0 - leg.phase_offset, STRIDE, 0.3);
-        let b = foot_position(&leg, STANCE_FRACTION - 1e-4 - leg.phase_offset, STRIDE, 0.3);
-        assert!(((a.x - b.x) - STRIDE).abs() < 1e-2);
-        // a frequencia faz o corpo avancar STRIDE no mesmo tempo
-        let v = 4.0; // unidades/s
-        let freq = gait_frequency(v);
-        let stance_time = STANCE_FRACTION / freq;
-        assert!((v * stance_time - STRIDE).abs() < 1e-5);
+        for stance in [0.5, 0.6] {
+            let a = step_offset(0.0, STRIDE, 0.3, stance);
+            let b = step_offset(stance - 1e-4, STRIDE, 0.3, stance);
+            assert!(((a.x - b.x) - STRIDE).abs() < 1e-2);
+            // a frequencia faz o corpo avancar STRIDE no mesmo tempo
+            let v = 4.0; // unidades/s
+            let freq = gait_frequency(v, STRIDE, stance);
+            let stance_time = stance / freq;
+            assert!((v * stance_time - STRIDE).abs() < 1e-5);
+        }
+        assert_eq!(gait_frequency(3.0, 0.0, 0.5), 0.0, "passo nulo nao divide por zero");
     }
 
     #[test]
     fn swing_is_continuous_with_stance() {
-        let leg = leg_layout()[1];
-        let end_of_stance =
-            foot_position(&leg, STANCE_FRACTION - 1e-5 - leg.phase_offset, STRIDE, 0.3);
-        let start_of_swing =
-            foot_position(&leg, STANCE_FRACTION + 1e-5 - leg.phase_offset, STRIDE, 0.3);
-        assert!((end_of_stance - start_of_swing).length() < 1e-3);
-        let end_of_swing = foot_position(&leg, 1.0 - 1e-5 - leg.phase_offset, STRIDE, 0.3);
-        let start_of_stance = foot_position(&leg, 1e-5 - leg.phase_offset, STRIDE, 0.3);
-        assert!((end_of_swing - start_of_stance).length() < 1e-3);
+        let s = STANCE_FRACTION;
+        let f = |p: f32| step_offset(p, STRIDE, 0.3, s);
+        assert!((f(s - 1e-5) - f(s + 1e-5)).length() < 1e-3);
+        assert!((f(1.0 - 1e-5) - f(1e-5)).length() < 1e-3);
     }
 
     #[test]
     fn zero_stride_keeps_feet_at_rest() {
-        for leg in leg_layout() {
-            for p in [0.0, 0.3, 0.7, 0.95] {
-                let f = foot_position(&leg, p, 0.0, 0.0);
-                assert!((f - leg.foot).length() < 1e-6);
-            }
+        for p in [0.0, 0.3, 0.7, 0.95] {
+            assert!(step_offset(p, 0.0, 0.0, 0.6).length() < 1e-6);
         }
     }
 
     #[test]
     fn ik_preserves_segment_lengths_when_reachable() {
-        let hip = Vec3::new(0.0, BODY_HEIGHT, 0.14);
+        let (l1, l2) = (0.6, 0.85);
+        let hip = Vec3::new(0.0, 0.55, 0.14);
         for target in [
             Vec3::new(0.5, 0.0, 1.0),
             Vec3::new(-0.7, 0.0, 1.2),
             Vec3::new(0.2, 0.3, 0.8),
         ] {
-            let (knee, foot) = two_bone_ik(hip, target, LEG_UPPER, LEG_LOWER, Vec3::Y);
-            assert!((hip.distance(knee) - LEG_UPPER).abs() < 1e-4);
-            assert!((knee.distance(foot) - LEG_LOWER).abs() < 1e-4);
+            let (knee, foot) = two_bone_ik(hip, target, l1, l2, Vec3::Y);
+            assert!((hip.distance(knee) - l1).abs() < 1e-4);
+            assert!((knee.distance(foot) - l2).abs() < 1e-4);
             assert!(foot.distance(target) < 1e-4, "alvo alcancavel e atingido");
             assert!(knee.y >= hip.y.min(foot.y), "joelho dobra para cima");
         }
@@ -583,54 +534,17 @@ mod tests {
 
     #[test]
     fn ik_clamps_unreachable_targets_without_nan() {
+        let (l1, l2) = (0.6, 0.85);
         let hip = Vec3::ZERO;
-        let (knee, foot) = two_bone_ik(
-            hip,
-            Vec3::new(10.0, 0.0, 0.0),
-            LEG_UPPER,
-            LEG_LOWER,
-            Vec3::Y,
-        );
+        let (knee, foot) = two_bone_ik(hip, Vec3::new(10.0, 0.0, 0.0), l1, l2, Vec3::Y);
         assert!(knee.is_finite() && foot.is_finite());
-        assert!(foot.length() <= LEG_UPPER + LEG_LOWER);
+        assert!(foot.length() <= l1 + l2);
         // alvo exatamente no quadril e pole degenerada
-        let (k, f) = two_bone_ik(hip, hip, LEG_UPPER, LEG_LOWER, Vec3::ZERO);
+        let (k, f) = two_bone_ik(hip, hip, l1, l2, Vec3::ZERO);
         assert!(k.is_finite() && f.is_finite());
         // pole paralela a direcao
-        let (k, f) = two_bone_ik(
-            hip,
-            Vec3::new(0.0, -1.2, 0.0),
-            LEG_UPPER,
-            LEG_LOWER,
-            Vec3::NEG_Y,
-        );
+        let (k, f) = two_bone_ik(hip, Vec3::new(0.0, -1.2, 0.0), l1, l2, Vec3::NEG_Y);
         assert!(k.is_finite() && f.is_finite());
-    }
-
-    #[test]
-    fn rest_pose_is_reachable_for_every_leg() {
-        for leg in leg_layout() {
-            let (knee, foot) = leg_pose(&leg, leg.foot);
-            assert!(
-                foot.distance(leg.foot) < 1e-3,
-                "pe de repouso fora de alcance: {leg:?}"
-            );
-            assert!(knee.y > 0.3, "joelho acima do chao");
-            // tambem alcanca o ponto mais alto do passo
-            let lifted = leg.foot + Vec3::new(STRIDE * 0.5, 0.3, 0.0);
-            let (_, f2) = leg_pose(&leg, lifted);
-            assert!(f2.distance(lifted) < 1e-3);
-        }
-    }
-
-    #[test]
-    fn curled_pose_is_reachable_and_above_ground() {
-        for leg in leg_layout() {
-            let t = curled_foot(&leg);
-            let (knee, foot) = leg_pose(&leg, t);
-            assert!(knee.is_finite() && foot.is_finite());
-            assert!(t.y > BODY_HEIGHT);
-        }
         let _ = (FRAC_PI_2, PI);
     }
 

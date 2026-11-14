@@ -48,6 +48,8 @@ pub struct RunOptions {
     pub poc: bool,
     /// Nao abre o painel flutuante.
     pub no_panel: bool,
+    /// Teste: um golpe de espada simulado a cada N segundos.
+    pub auto_hit_secs: Option<f32>,
     /// Teste: aciona os botoes do painel automaticamente.
     pub panel_selftest: bool,
     /// Mobs extras a spawnar ao iniciar (rotulos do catalogo ou indices).

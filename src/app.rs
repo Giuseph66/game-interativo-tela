@@ -38,6 +38,7 @@ pub struct Cli {
     pub auto_kill_secs: Option<f32>,
     pub no_panel: bool,
     pub panel_selftest: bool,
+    pub auto_hit_secs: Option<f32>,
     pub spawn: Vec<String>,
     pub list_mobs: bool,
     pub print_config: bool,
@@ -105,6 +106,17 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
             "--poc" => cli.poc = true,
             "--no-panel" => cli.no_panel = true,
             "--panel-selftest" => cli.panel_selftest = true,
+            "--auto-hit" => {
+                let v: f32 = it
+                    .next()
+                    .ok_or("--auto-hit exige segundos")?
+                    .parse()
+                    .map_err(|_| "--auto-hit invalido")?;
+                if !(v.is_finite() && v > 0.0) {
+                    return Err("--auto-hit deve ser > 0".into());
+                }
+                cli.auto_hit_secs = Some(v);
+            }
             "--list-mobs" => cli.list_mobs = true,
             "--spawn" => {
                 let v = it
@@ -198,6 +210,7 @@ pub fn run(cli: Cli) -> ExitCode {
         auto_kill_secs: cli.auto_kill_secs,
         no_panel: cli.no_panel,
         panel_selftest: cli.panel_selftest,
+        auto_hit_secs: cli.auto_hit_secs,
         spawn: cli.spawn,
     };
     let exit = build_app(cfg, opts).run();
@@ -304,9 +317,17 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
         .insert_resource(Metrics::default())
         .add_plugins(OverlayPlugin)
         .add_message::<MobCommand>()
+        .add_message::<crate::hud::HitFx>()
+        .init_resource::<crate::game::Progress>()
         .add_systems(
             Startup,
-            (setup_scene, spawn_initial_mobs, panel::spawn_panel).chain(),
+            (
+                setup_scene,
+                spawn_initial_mobs,
+                panel::spawn_panel,
+                crate::hud::setup_hud,
+            )
+                .chain(),
         )
         .add_systems(
             Update,
@@ -336,6 +357,10 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
                 animate_procedural,
                 fit_glb_model,
                 drive_glb_animation,
+                crate::hud::spawn_hit_fx,
+                crate::hud::animate_fx,
+                crate::hud::update_health_bars,
+                crate::hud::update_sword_cursor,
             )
                 .chain()
                 .in_set(OverlaySet::Game),

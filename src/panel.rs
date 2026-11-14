@@ -43,7 +43,7 @@ pub struct PanelButton(Color);
 pub fn panel_height(kinds: usize) -> f32 {
     // titulo + status + rotulo + botoes de spawn + linha de acoes + sair + dica + margens
     let rows = kinds as f32 + 2.0;
-    46.0 + 26.0 + 22.0 + rows * (BUTTON_H + GAP) + 26.0 + 24.0
+    46.0 + 26.0 + 36.0 + 22.0 + rows * (BUTTON_H + GAP) + 26.0 + 24.0
 }
 
 pub fn spawn_panel(
@@ -354,21 +354,36 @@ pub fn fit_panel(
 }
 
 pub fn update_status(
+    cfg: Res<crate::config::Config>,
     score: Res<Score>,
+    progress: Res<crate::game::Progress>,
     mobs: Query<&Mob>,
     mut texts: Query<&mut Text, With<StatusText>>,
-    mut last: Local<(usize, u32, u32)>,
+    mut last: Local<(usize, u32, u32, u32)>,
 ) {
     let n = mobs.iter().count();
-    let now = (n, score.kills, score.points);
+    let now = (n, score.kills, score.points, progress.xp);
     if *last == now {
         return;
     }
     *last = now;
+    let sword = progress.sword;
+    let next = match sword.next() {
+        Some(nx) => format!(
+            "{}/{} p/ {}",
+            progress.xp,
+            nx.xp_required(&cfg.combat),
+            nx.label()
+        ),
+        None => format!("{} (max)", progress.xp),
+    };
     for mut t in &mut texts {
         **t = format!(
-            "Mobs: {n}   Abates: {}   Pontos: {}",
-            score.kills, score.points
+            "Mobs: {n}   Abates: {}   Pontos: {}\nEspada: {} (dano {})\nXP: {next}",
+            score.kills,
+            score.points,
+            sword.label(),
+            sword.damage(&cfg.combat)
         );
     }
 }

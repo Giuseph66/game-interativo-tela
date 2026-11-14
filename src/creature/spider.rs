@@ -172,7 +172,18 @@ pub fn read_click(
         return;
     }
 
-    let Some(c) = cursor.local.filter(|_| pressed) else {
+    // gancho de teste (`--auto-hit N`): um golpe de espada simulado a cada N s no primeiro mob vivo
+    let simulated = opts.auto_hit_secs.and_then(|every| {
+        let due = time.elapsed_secs() >= every * (*auto_kills_done + 1) as f32;
+        due.then(|| {
+            *auto_kills_done += 1;
+            mobs.iter()
+                .find(|m| m.sim.hittable())
+                .map(|m| m.sim.body_center)
+        })
+        .flatten()
+    });
+    let Some(c) = simulated.or(cursor.local.filter(|_| pressed)) else {
         return;
     };
     let target = mobs
