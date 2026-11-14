@@ -1,7 +1,8 @@
-# Modelos 3D
+# Modelos 3D (opcional)
 
-Coloque aqui o modelo da aranha como **`spider.glb`**. Se o arquivo não existir (ou falhar ao
-carregar), o SpiderDesk usa a aranha procedural feita de primitivas do Bevy.
+Os mobs padrão são feitos em código (`src/creature/species.rs`) e não usam nada desta pasta.
+Os `.glb` daqui só aparecem como tipos de mob com **`[mobs] include_glb = true`**. Se um arquivo
+falhar ao carregar, o SpiderDesk usa a aranha procedural no lugar.
 
 Convenções do modelo:
 

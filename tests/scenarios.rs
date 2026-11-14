@@ -168,6 +168,7 @@ fn graph_topology_is_dpi_invariant() {
             min_segment: cfg.navigation.min_segment_px,
             min_window_size: cfg.navigation.min_window_size_px,
             screen_edges: true,
+            silk_threads: false,
         };
         let g = PathGraph::build(s, &wins, &params);
         counts.push((g.nodes.len(), g.edges.len()));

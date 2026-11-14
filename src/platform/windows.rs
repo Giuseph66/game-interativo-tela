@@ -26,8 +26,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW, GetCursorPos, GetWindow, GetWindowLongPtrW,
     GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, HWND_TOPMOST, IsIconic,
     IsWindowVisible, IsZoomed, MSG, PM_REMOVE, PeekMessageW, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, WM_HOTKEY, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW,
+    SWP_NOSIZE, SWP_NOZORDER, SetCursorPos, SetWindowLongPtrW, SetWindowPos, WM_HOTKEY,
+    WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 use windows::core::BOOL;
 
@@ -61,6 +61,99 @@ pub fn cursor_position() -> Option<Vec2> {
     // SAFETY: `p` e um POINT valido e vive durante a chamada.
     unsafe { GetCursorPos(&mut p) }.ok()?;
     Some(Vec2::new(p.x as f32, p.y as f32))
+}
+
+/// Move o cursor real para `global` (px fisicos do desktop virtual).
+pub fn set_cursor_pos(global: Vec2) -> bool {
+    // SAFETY: chamada sem ponteiros; coordenadas fora da tela sao ajustadas pelo sistema.
+    unsafe { SetCursorPos(global.x.round() as i32, global.y.round() as i32) }.is_ok()
+}
+
+/// O Windows sempre permite mover o cursor.
+pub fn can_move_cursor() -> bool {
+    true
+}
+
+/// Imagens das janelas para o heroi andar por dentro dos apps: ainda nao implementado no
+/// Windows (o heroi anda nas janelas, mas nao no conteudo delas).
+pub fn request_window_images(_on: bool) {}
+
+pub fn window_ledges(_id: u64) -> Option<crate::game::hero::WindowLedges> {
+    None
+}
+
+pub fn window_ledges_version() -> u64 {
+    0
+}
+
+/// Nada a desfazer na saida.
+pub fn shutdown() {}
+
+/// Area util de cada monitor (sem a barra de tarefas), px fisicos do desktop virtual.
+pub fn work_areas(_screen: Rect) -> Vec<Rect> {
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
+    };
+
+    unsafe extern "system" fn each(
+        monitor: HMONITOR,
+        _hdc: HDC,
+        _clip: *mut RECT,
+        data: LPARAM,
+    ) -> windows::core::BOOL {
+        // SAFETY: `data` e o `&mut Vec<Rect>` passado abaixo, vivo durante a enumeracao.
+        let out = unsafe { &mut *(data.0 as *mut Vec<Rect>) };
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: `info` e valido e tem `cbSize` preenchido.
+        if unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+            let r = info.rcWork;
+            out.push(Rect::new(
+                Vec2::new(r.left as f32, r.top as f32),
+                Vec2::new(r.right as f32, r.bottom as f32),
+            ));
+        }
+        true.into()
+    }
+
+    let mut out: Vec<Rect> = Vec::new();
+    // SAFETY: o callback so usa `data` como o vetor acima, que vive ate o fim da chamada.
+    let _ = unsafe {
+        EnumDisplayMonitors(
+            None,
+            None,
+            Some(each),
+            LPARAM(&mut out as *mut Vec<Rect> as isize),
+        )
+    };
+    out
+}
+
+/// O Win32 ja lista as janelas reais.
+pub fn helper_status() -> super::HelperStatus {
+    super::HelperStatus::NotNeeded
+}
+
+/// Nada a instalar no Windows.
+pub fn install_helper() -> Result<(), String> {
+    Ok(())
+}
+
+/// `GetCursorPos` acompanha o ponteiro em qualquer lugar da tela.
+pub fn pointer_tracking_live() -> bool {
+    true
+}
+
+/// Nao e preciso no Windows: o movimento do cursor e lido diretamente.
+pub fn input_idle_secs() -> Option<f32> {
+    None
+}
+
+/// De onde vem a lista de janelas (para o log de inicio e `--list-windows`).
+pub fn window_source() -> &'static str {
+    "Win32 (EnumWindows)"
 }
 
 struct EnumCtx {
@@ -245,6 +338,35 @@ pub fn ensure_overlay_styles(handle: &bevy::window::RawHandleWrapper, layered_al
             LAYERED_SEEN.store(false, Ordering::Relaxed);
         }
     }
+}
+
+/// Canto superior esquerdo real da janela (pixels fisicos).
+pub fn window_origin(handle: &bevy::window::RawHandleWrapper) -> Option<bevy::math::IVec2> {
+    let hwnd = hwnd_of(handle).ok()?;
+    let mut r = RECT::default();
+    // SAFETY: hwnd e deste processo; `r` vive durante a chamada.
+    unsafe { GetWindowRect(hwnd, &mut r) }.ok()?;
+    Some(bevy::math::IVec2::new(r.left, r.top))
+}
+
+/// Move a janela sem mudar tamanho, ordem Z nem ativacao.
+pub fn move_window(handle: &bevy::window::RawHandleWrapper, pos: bevy::math::IVec2) -> bool {
+    let Ok(hwnd) = hwnd_of(handle) else {
+        return false;
+    };
+    // SAFETY: hwnd e deste processo; flags preservam tamanho/ordem/foco.
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            pos.x,
+            pos.y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    }
+    .is_ok()
 }
 
 /// No Windows o click-through usa `hit_test` (winit/`WS_EX_TRANSPARENT`): nada a fazer aqui.

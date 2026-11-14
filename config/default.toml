@@ -13,11 +13,12 @@ backend = "auto"                  # auto | dx12 | vulkan (DX12 e necessario p/ t
 msaa_samples = 1                  # 1 (off), 2 ou 4
 layered_alpha_fix = false         # Windows: remedio se o overlay sumir ao passar o cursor na aranha
 hit_hysteresis = 1.1              # histerese: com o cursor entre raio e raio*1.1 o clique ainda e capturado
+all_monitors = true               # true: overlay cobre todas as telas (mobs andam entre elas); false: so a principal
 
 [spider]
-model = "models/spider.glb"       # relativo a assets/; se faltar usa a aranha procedural
+model = "models/spider.glb"       # GLB opcional (so com mobs.include_glb = true)
 scale = 1.0
-hit_radius_px = 34.0              # raio do circulo clicavel
+hit_radius_px = 34.0              # 34 = hitbox natural de cada bicho; maior/menor escala todos
 walk_speed = 90.0                 # px/s
 run_speed = 260.0
 climb_speed = 60.0
@@ -48,12 +49,15 @@ link_distance_px = 14.0           # distancia p/ ligar bordas de janelas diferen
 min_window_size_px = 120.0
 min_segment_px = 24.0
 screen_edges = true               # perimetro da tela como caminho
+silk_threads = true               # fios de seda da base de cada janela ate a superficie abaixo (pontes)
 debug_draw = false
 
 [mobs]
-initial = 1                       # mobs ao iniciar (tipo de spider.model ou a aranha procedural)
+initial = 1                       # mobs ao iniciar
+initial_kind = "aranha"           # aranha | aranha-lobo | formiga | barata | gafanhoto | rato | misto
 max = 30                          # limite de mobs simultaneos
 panel = true                      # painel flutuante para spawnar mobs
+include_glb = false               # tambem lista assets/models/*.glb (modelos de terceiros)
 
 [combat]
 mob_hp = 10.0                     # vida de cada mob
@@ -68,6 +72,89 @@ xp_iron = 30                      # XP total para evoluir: madeira -> ferro -> o
 xp_gold = 90
 xp_diamond = 250
 health_bar_secs = 3.0             # tempo que a barra de vida fica visivel apos um golpe
+
+[nests]
+enabled = true                    # ninhos em janelas paradas + sacudir a janela
+calm_secs = 45.0                  # janela parada por este tempo aceita ninho
+build_chance_per_sec = 0.15       # chance/s de um mob em repouso nela construir um
+build_secs = 6.0                  # tempo de construcao (cresce, ainda nao choca)
+nest_hp = 30.0
+nest_radius_px = 22.0             # tamanho do ninho pronto (e raio clicavel)
+max_per_window = 1
+max_total = 4
+hatch_interval_secs = 20.0        # um filhote a cada N s (enquanto couber em mobs.max)
+elite_after_secs = 120.0          # ninho velho passa a chocar elites
+elite_hp_multiplier = 2.5         # vida do elite = mob_hp x isto
+xp_per_nest = 25                  # XP extra por destruir um ninho
+shake_reversals = 3               # sacudida = N inversoes de sentido do arrasto...
+shake_window_secs = 1.2           # ...dentro deste tempo...
+shake_min_px = 60.0               # ...cada uma apos um trecho de pelo menos isto
+shake_cooldown_secs = 2.5         # sacudir sem parar conta uma vez a cada N s (por janela)
+shake_poll_ms = 50                # consulta de janelas enquanto alguma se move
+shake_nest_damage = 8.0           # a sacudida racha o ninho (nunca destroi: sobra 1 de vida)
+fall_damage = 3.0                 # dano do mob derrubado ao pousar
+stun_secs = 1.5                   # tempo atordoado apos o pouso
+bite_radius_px = 90.0             # elite morde se o cursor ficar a menos disto...
+bite_windup_secs = 1.2            # ...por este tempo seguido
+bite_xp = 5                       # XP roubado por mordida (a espada conquistada nao se perde)
+bite_cooldown_secs = 4.0
+
+[web]
+# Sequestro do mouse: se o mouse ficar parado, uma aranha fisga o cursor com um fio, passeia com ele
+# pendurado, brinca de ioio e o leva para a teia do canto. Solte-se clicando (corta o fio /
+# destroi a teia) ou sacudindo o mouse. A contagem regressiva aparece no painel.
+enabled = true
+idle_secs = 20.0                  # REGRA: so rouba o mouse PARADO por N s (mexeu, a contagem zera)
+corner = "top_left"               # canto da teia: top_left | top_right | bottom_left | bottom_right
+radius_px = 70.0                  # tamanho da teia
+rope_px = 90.0                    # comprimento do fio com o cursor pendurado
+thread_hp = 8.0                   # vida do fio (clique = dano da espada)
+struggle_damage = 1.0             # dano no fio a cada 1000 px de sacudida do mouse
+play_stops = 2                    # paradas para brincar antes de ir para a teia
+play_secs = 3.5
+drag_speed = 180.0                # velocidade da aranha carregando o cursor (px/s)
+web_hp = 12.0                     # vida da teia (golpes de espada; madeira 2, ferro/ouro 4, diamante 8)
+max_trap_secs = 30.0              # SEGURANCA: a teia solta o cursor sozinha (max 600)
+cooldown_secs = 20.0              # descanso da aranha depois que voce se solta
+xp_reward = 15                    # XP por se soltar (ou por arrancar a teia)
+# A teia do canto pode ser arrancada a golpes (clique nela) a qualquer hora. Sem teia nao ha roubo:
+rebuild_secs = 25.0               # tempo sem teia ate uma aranha ir refazer
+build_secs = 4.0                  # tempo que ela leva tecendo
+hunt_speed = 300.0                # velocidade da aranha indo tecer (px/s)
+# (legado, modo antigo sem uso: mode, spot_distance_px)
+
+[hero]
+# Heroi: personagem que voce controla com o teclado (clique no painel do SpiderDesk para ele
+# receber as teclas). A/D andam, Ctrl corre, Shift anda devagar sem cair das pontas, W pula
+# (2x = pulo duplo; segurado perto de lateral de janela/fio de seda/parede agarra e escala),
+# S desce atravessando o apoio, Espaco (ou J) golpeia.
+enabled = true
+size_px = 60.0                    # altura do personagem
+walk_speed = 230.0
+run_speed = 430.0                 # Ctrl
+sneak_speed = 110.0               # Shift: devagar e sem cair das pontas
+climb_speed = 210.0
+jump_speed = 780.0                # altura do pulo = jump_speed^2 / (2 * gravity) ~ 145 px
+gravity = 2100.0
+double_jump = true
+max_hp = 5                        # coracoes
+invuln_secs = 1.6                 # tempo sem levar dano depois de um golpe
+respawn_secs = 3.0
+attack_reach_px = 62.0            # alcance da espada (o dano e o da espada atual)
+attack_cooldown_secs = 0.32
+damage_multiplier = 2.0           # golpe do heroi = 2x o dano da espada (madeira 4, diamante 16)
+stomp_multiplier = 3.0            # pisao (cair em cima do bicho) = 3x
+stomp_bounce = 560.0              # impulso ao pisar num bicho
+contact_damage = 1                # dano de encostar num bicho (elite: o dobro)
+inside_apps = true                # anda nas linhas de texto e bordas DENTRO dos aplicativos
+                                  # (GNOME: a extensao salva a imagem das 3 janelas da frente
+                                  # numa pasta privada em memoria, so enquanto o heroi existe)
+min_ledge_px = 24.0               # trechos menores nao viram apoio
+coins = 6                         # moedas espalhadas pelos apoios
+xp_per_coin = 2
+xp_per_star = 12                  # estrela = missao: chegar a um lugar distante
+xp_per_discovery = 3              # primeira vez em cima de cada janela/elemento
+mobs_notice = true                # os bichos reagem ao heroi como reagem ao cursor
 
 [game]
 points_per_kill = 100

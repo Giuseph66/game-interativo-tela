@@ -59,6 +59,9 @@ pub struct OverlayConfig {
     /// Windows: aplica alfa constante 255 (SetLayeredWindowAttributes) quando o winit liga
     /// WS_EX_LAYERED. Remedio hipotetico caso o overlay suma ao passar o cursor sobre a aranha.
     pub layered_alpha_fix: bool,
+    /// Cobre TODOS os monitores com um unico overlay (os mobs andam entre as telas). `false` =
+    /// so o monitor principal.
+    pub all_monitors: bool,
 }
 
 impl Default for OverlayConfig {
@@ -74,6 +77,7 @@ impl Default for OverlayConfig {
             msaa_samples: 1,
             hit_hysteresis: 1.1,
             layered_alpha_fix: false,
+            all_monitors: true,
         }
     }
 }
@@ -81,11 +85,11 @@ impl Default for OverlayConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SpiderConfig {
-    /// Caminho relativo a `assets/` do modelo GLB. Se ausente, usa a aranha procedural.
+    /// Caminho relativo a `assets/` do modelo GLB (so com `mobs.include_glb`).
     pub model: String,
     /// Escala de exibicao (1.0 = ~64 px de envergadura).
     pub scale: f32,
-    /// Raio do circulo clicavel, em px (antes de `scale`).
+    /// Raio de clique de referencia em px (34 = hitbox natural de cada bicho; escala todos).
     pub hit_radius_px: f32,
     /// Velocidades em px/s.
     pub walk_speed: f32,
@@ -178,6 +182,8 @@ pub struct NavigationConfig {
     pub min_segment_px: f32,
     /// Usa o perimetro da tela como caminho.
     pub screen_edges: bool,
+    /// Fios de seda ligando a base de cada janela a superficie abaixo (pontes entre janelas).
+    pub silk_threads: bool,
     /// Desenha o grafo (gizmos) para depuracao.
     pub debug_draw: bool,
 }
@@ -190,6 +196,7 @@ impl Default for NavigationConfig {
             min_window_size_px: 120.0,
             min_segment_px: 24.0,
             screen_edges: true,
+            silk_threads: true,
             debug_draw: false,
         }
     }
@@ -198,20 +205,170 @@ impl Default for NavigationConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MobsConfig {
-    /// Quantos mobs aparecem ao iniciar (tipo: `spider.model`, se existir; senao a procedural).
+    /// Quantos mobs aparecem ao iniciar.
     pub initial: u32,
+    /// Tipo dos mobs iniciais: aranha, aranha-lobo, formiga, barata, gafanhoto, rato ou
+    /// "misto" (sorteia). Vazio + `include_glb`: usa o GLB de `spider.model`.
+    pub initial_kind: String,
     /// Limite de mobs simultaneos (protege CPU/GPU).
     pub max: u32,
     /// Mostra o painel flutuante de spawn.
     pub panel: bool,
+    /// Tambem lista cada `assets/models/*.glb` como tipo de mob (modelos de terceiros).
+    pub include_glb: bool,
 }
 
 impl Default for MobsConfig {
     fn default() -> Self {
         Self {
             initial: 1,
+            initial_kind: "aranha".to_string(),
             max: 30,
             panel: true,
+            include_glb: false,
+        }
+    }
+}
+
+/// Heroi: personagem controlado pelo teclado que anda pela tela e por dentro dos aplicativos.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HeroConfig {
+    pub enabled: bool,
+    /// Altura do personagem (px).
+    pub size_px: f32,
+    pub walk_speed: f32,
+    pub run_speed: f32,
+    /// Andando devagar (Shift): nao cai das pontas.
+    pub sneak_speed: f32,
+    pub climb_speed: f32,
+    /// Velocidade inicial do pulo (px/s) e gravidade (px/s2): altura = v2 / (2 g).
+    pub jump_speed: f32,
+    pub gravity: f32,
+    pub double_jump: bool,
+    pub max_hp: u32,
+    /// Tempo sem levar dano depois de um golpe (s).
+    pub invuln_secs: f32,
+    pub respawn_secs: f32,
+    /// Alcance e intervalo do golpe de espada (o dano e o da espada atual, como no clique).
+    pub attack_reach_px: f32,
+    pub attack_cooldown_secs: f32,
+    /// O golpe do heroi vale este multiplo do dano da espada atual; o pisao, este outro.
+    pub damage_multiplier: f32,
+    pub stomp_multiplier: f32,
+    /// Impulso para cima ao pisar num bicho (px/s).
+    pub stomp_bounce: f32,
+    /// Dano de encostar num bicho (elite tira o dobro).
+    pub contact_damage: u32,
+    /// Anda por dentro dos aplicativos: pede a imagem das janelas a plataforma para achar as
+    /// linhas de texto e bordas (no GNOME, pela extensao; as imagens nao saem do computador).
+    pub inside_apps: bool,
+    /// Trechos menores que isso (px) nao viram apoio.
+    pub min_ledge_px: f32,
+    /// Moedas espalhadas ao mesmo tempo.
+    pub coins: u32,
+    pub xp_per_coin: u32,
+    pub xp_per_star: u32,
+    /// XP por pisar pela primeira vez numa janela/elemento novo.
+    pub xp_per_discovery: u32,
+    /// Os bichos reagem ao heroi como reagem ao cursor.
+    pub mobs_notice: bool,
+}
+
+impl Default for HeroConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            size_px: 60.0,
+            walk_speed: 230.0,
+            run_speed: 430.0,
+            sneak_speed: 110.0,
+            climb_speed: 210.0,
+            jump_speed: 780.0,
+            gravity: 2100.0,
+            double_jump: true,
+            max_hp: 5,
+            invuln_secs: 1.6,
+            respawn_secs: 3.0,
+            attack_reach_px: 62.0,
+            attack_cooldown_secs: 0.32,
+            damage_multiplier: 2.0,
+            stomp_multiplier: 3.0,
+            stomp_bounce: 560.0,
+            contact_damage: 1,
+            inside_apps: true,
+            min_ledge_px: 24.0,
+            coins: 6,
+            xp_per_coin: 2,
+            xp_per_star: 12,
+            xp_per_discovery: 3,
+            mobs_notice: true,
+        }
+    }
+}
+
+/// Teia: com o mouse parado por `idle_secs`, um mob leva o cursor para uma teia.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    pub enabled: bool,
+    /// Segundos com o mouse parado ate um mob vir buscar o cursor.
+    pub idle_secs: f32,
+    /// "build_first" (tece a teia e depois leva o mouse), "wrap" (leva o mouse e tece por cima)
+    /// ou "random" (sorteia a cada vez).
+    pub mode: String,
+    /// Vida da teia (dano das espadas: madeira 2, ferro/ouro 4, diamante 8).
+    pub web_hp: f32,
+    pub radius_px: f32,
+    /// Distancia aproximada entre o cursor e a teia.
+    pub spot_distance_px: f32,
+    pub build_secs: f32,
+    /// Velocidade do cacador indo ate a teia/cursor e arrastando o cursor (px/s).
+    pub hunt_speed: f32,
+    pub drag_speed: f32,
+    /// Seguranca: a teia se desfaz sozinha depois disso (s).
+    pub max_trap_secs: f32,
+    /// Espera extra depois que o jogador se solta (s).
+    pub cooldown_secs: f32,
+    /// Canto da tela onde fica a teia: "top_left", "top_right", "bottom_left" ou "bottom_right".
+    pub corner: String,
+    /// Comprimento do fio em que o cursor fica pendurado.
+    pub rope_px: f32,
+    /// Vida do fio: cliques tiram o dano da espada; sacudir o mouse tira `struggle_damage` por 1000 px.
+    pub thread_hp: f32,
+    pub struggle_damage: f32,
+    /// Paradas para brincar (ioio) antes de levar o cursor para a teia, e a duracao de cada uma.
+    pub play_stops: u32,
+    pub play_secs: f32,
+    /// XP por se soltar (cortar o fio ou destruir a teia).
+    pub xp_reward: u32,
+    /// Depois de arrancada, a teia fica fora por N s; entao uma aranha vai ao canto e tece outra
+    /// em `build_secs` (indo a `hunt_speed` px/s).
+    pub rebuild_secs: f32,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            idle_secs: 20.0,
+            mode: "random".into(),
+            web_hp: 12.0,
+            radius_px: 70.0,
+            spot_distance_px: 260.0,
+            build_secs: 4.0,
+            hunt_speed: 300.0,
+            drag_speed: 180.0,
+            max_trap_secs: 30.0,
+            cooldown_secs: 20.0,
+            corner: "top_left".into(),
+            rope_px: 90.0,
+            thread_hp: 8.0,
+            struggle_damage: 1.0,
+            play_stops: 2,
+            play_secs: 3.5,
+            xp_reward: 15,
+            rebuild_secs: 25.0,
         }
     }
 }
@@ -270,6 +427,86 @@ impl Default for GameConfig {
     }
 }
 
+/// Ninhos em janelas paradas, sacudir a janela para derrubar os mobs e mordida dos elites.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NestsConfig {
+    pub enabled: bool,
+    /// Janela parada por este tempo (s) passa a aceitar ninho.
+    pub calm_secs: f32,
+    /// Chance por segundo de um mob em repouso numa janela calma construir um ninho.
+    pub build_chance_per_sec: f32,
+    /// Tempo de construcao (s): o ninho cresce e ainda nao choca.
+    pub build_secs: f32,
+    pub nest_hp: f32,
+    /// Raio do ninho pronto (px); tambem e o raio clicavel.
+    pub nest_radius_px: f32,
+    pub max_per_window: u32,
+    pub max_total: u32,
+    /// Intervalo entre filhotes de um ninho pronto (s).
+    pub hatch_interval_secs: f32,
+    /// Idade (s) em que o ninho passa a chocar elites.
+    pub elite_after_secs: f32,
+    /// Vida do elite = `combat.mob_hp` vezes isto.
+    pub elite_hp_multiplier: f32,
+    /// XP extra por destruir um ninho (alem do XP normal de golpe/abate).
+    pub xp_per_nest: u32,
+    /// Inversoes de sentido para o arrasto contar como sacudida...
+    pub shake_reversals: u32,
+    /// ...dentro desta janela de tempo (s)...
+    pub shake_window_secs: f32,
+    /// ...cada uma depois de um trecho de pelo menos isto (px).
+    pub shake_min_px: f32,
+    /// Intervalo minimo (s) entre duas sacudidas da mesma janela.
+    pub shake_cooldown_secs: f32,
+    /// Periodo da consulta de janelas (ms) enquanto alguma janela esta se movendo.
+    pub shake_poll_ms: u64,
+    /// Vida que cada sacudida tira dos ninhos da janela (nunca destroi: sobra 1).
+    pub shake_nest_damage: f32,
+    /// Dano que o mob derrubado leva ao pousar.
+    pub fall_damage: f32,
+    /// Tempo atordoado apos o pouso (s).
+    pub stun_secs: f32,
+    /// Elite morde quando o cursor fica a menos disto (px)...
+    pub bite_radius_px: f32,
+    /// ...por este tempo seguido (s).
+    pub bite_windup_secs: f32,
+    /// XP roubado por mordida (a espada ja conquistada nunca e perdida).
+    pub bite_xp: u32,
+    pub bite_cooldown_secs: f32,
+}
+
+impl Default for NestsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            calm_secs: 45.0,
+            build_chance_per_sec: 0.15,
+            build_secs: 6.0,
+            nest_hp: 30.0,
+            nest_radius_px: 22.0,
+            max_per_window: 1,
+            max_total: 4,
+            hatch_interval_secs: 20.0,
+            elite_after_secs: 120.0,
+            elite_hp_multiplier: 2.5,
+            xp_per_nest: 25,
+            shake_reversals: 3,
+            shake_window_secs: 1.2,
+            shake_min_px: 60.0,
+            shake_cooldown_secs: 2.5,
+            shake_poll_ms: 50,
+            shake_nest_damage: 8.0,
+            fall_damage: 3.0,
+            stun_secs: 1.5,
+            bite_radius_px: 90.0,
+            bite_windup_secs: 1.2,
+            bite_xp: 5,
+            bite_cooldown_secs: 4.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DiagnosticsConfig {
@@ -294,6 +531,9 @@ pub struct Config {
     pub navigation: NavigationConfig,
     pub mobs: MobsConfig,
     pub combat: CombatConfig,
+    pub nests: NestsConfig,
+    pub web: WebConfig,
+    pub hero: HeroConfig,
     pub game: GameConfig,
     pub diagnostics: DiagnosticsConfig,
 }
@@ -343,11 +583,54 @@ impl Config {
         c.navigation.link_distance_px *= k;
         c.navigation.min_window_size_px *= k;
         c.navigation.min_segment_px *= k;
+        c.nests.nest_radius_px *= k;
+        c.nests.shake_min_px *= k;
+        c.nests.bite_radius_px *= k;
+        c.web.radius_px *= k;
+        c.web.spot_distance_px *= k;
+        c.web.hunt_speed *= k;
+        c.web.drag_speed *= k;
+        c.web.rope_px *= k;
+        c.hero.size_px *= k;
+        c.hero.walk_speed *= k;
+        c.hero.run_speed *= k;
+        c.hero.sneak_speed *= k;
+        c.hero.climb_speed *= k;
+        c.hero.jump_speed *= k;
+        c.hero.gravity *= k;
+        c.hero.attack_reach_px *= k;
+        c.hero.stomp_bounce *= k;
+        c.hero.min_ledge_px *= k;
         c
     }
 
     /// Mantem valores dentro de faixas seguras.
     pub fn sanitize(&mut self) {
+        let h = &mut self.hero;
+        h.size_px = h.size_px.clamp(16.0, 200.0);
+        h.walk_speed = h.walk_speed.clamp(20.0, 2000.0);
+        h.run_speed = h.run_speed.clamp(h.walk_speed, 4000.0);
+        h.sneak_speed = h.sneak_speed.clamp(10.0, h.walk_speed);
+        h.climb_speed = h.climb_speed.clamp(20.0, 2000.0);
+        h.jump_speed = h.jump_speed.clamp(100.0, 4000.0);
+        h.gravity = h.gravity.clamp(200.0, 20_000.0);
+        h.max_hp = h.max_hp.clamp(1, 20);
+        h.invuln_secs = h.invuln_secs.clamp(0.1, 30.0);
+        h.respawn_secs = h.respawn_secs.clamp(0.5, 120.0);
+        h.attack_reach_px = h.attack_reach_px.clamp(10.0, 600.0);
+        h.attack_cooldown_secs = h.attack_cooldown_secs.clamp(0.05, 10.0);
+        h.min_ledge_px = h.min_ledge_px.clamp(8.0, 400.0);
+        h.damage_multiplier = h.damage_multiplier.clamp(0.1, 100.0);
+        h.stomp_multiplier = h.stomp_multiplier.clamp(0.1, 100.0);
+        h.coins = h.coins.min(40);
+        let w = &mut self.web;
+        w.idle_secs = w.idle_secs.clamp(2.0, 3600.0);
+        w.rope_px = w.rope_px.clamp(20.0, 400.0);
+        w.thread_hp = w.thread_hp.clamp(1.0, 1000.0);
+        w.struggle_damage = w.struggle_damage.clamp(0.0, 100.0);
+        w.play_stops = w.play_stops.min(6);
+        w.play_secs = w.play_secs.clamp(0.5, 20.0);
+        w.rebuild_secs = w.rebuild_secs.clamp(1.0, 3600.0);
         let o = &mut self.overlay;
         o.fps_limit = o.fps_limit.clamp(5, 240);
         o.idle_update_hz = o.idle_update_hz.clamp(1.0, 60.0);
@@ -403,6 +686,44 @@ impl Config {
         k.xp_gold = k.xp_gold.max(k.xp_iron);
         k.xp_diamond = k.xp_diamond.max(k.xp_gold);
         k.health_bar_secs = k.health_bar_secs.clamp(0.2, 60.0);
+
+        let t = &mut self.nests;
+        t.calm_secs = t.calm_secs.clamp(0.0, 86_400.0);
+        t.build_chance_per_sec = t.build_chance_per_sec.clamp(0.0, 100.0);
+        t.build_secs = t.build_secs.clamp(0.1, 3600.0);
+        t.nest_hp = t.nest_hp.clamp(1.0, 100_000.0);
+        t.nest_radius_px = t.nest_radius_px.clamp(6.0, 200.0);
+        t.max_per_window = t.max_per_window.min(8);
+        t.max_total = t.max_total.min(64);
+        t.hatch_interval_secs = t.hatch_interval_secs.clamp(1.0, 86_400.0);
+        t.elite_after_secs = t.elite_after_secs.clamp(0.0, 86_400.0);
+        t.elite_hp_multiplier = t.elite_hp_multiplier.clamp(1.0, 100.0);
+        t.shake_reversals = t.shake_reversals.clamp(2, 20);
+        t.shake_window_secs = t.shake_window_secs.clamp(0.3, 10.0);
+        t.shake_min_px = t.shake_min_px.clamp(5.0, 2000.0);
+        t.shake_cooldown_secs = t.shake_cooldown_secs.clamp(0.0, 600.0);
+        t.shake_poll_ms = t.shake_poll_ms.clamp(16, 1000);
+        t.shake_nest_damage = t.shake_nest_damage.clamp(0.0, 100_000.0);
+        t.fall_damage = t.fall_damage.clamp(0.0, 100_000.0);
+        t.stun_secs = t.stun_secs.clamp(0.0, 60.0);
+        t.bite_radius_px = t.bite_radius_px.clamp(10.0, 2000.0);
+        t.bite_windup_secs = t.bite_windup_secs.clamp(0.1, 60.0);
+        t.bite_cooldown_secs = t.bite_cooldown_secs.clamp(0.5, 600.0);
+
+        let w = &mut self.web;
+        w.idle_secs = w.idle_secs.clamp(1.0, 86_400.0);
+        if !matches!(w.mode.as_str(), "build_first" | "wrap" | "random") {
+            w.mode = "random".into();
+        }
+        w.web_hp = w.web_hp.clamp(0.1, 100_000.0);
+        w.radius_px = w.radius_px.clamp(20.0, 500.0);
+        w.spot_distance_px = w.spot_distance_px.clamp(0.0, 3000.0);
+        w.build_secs = w.build_secs.clamp(0.1, 30.0);
+        w.hunt_speed = w.hunt_speed.clamp(20.0, 5000.0);
+        w.drag_speed = w.drag_speed.clamp(20.0, 5000.0);
+        // seguranca: o cursor nunca fica preso por mais de 10 minutos
+        w.max_trap_secs = w.max_trap_secs.clamp(3.0, 600.0);
+        w.cooldown_secs = w.cooldown_secs.clamp(0.0, 86_400.0);
         self.mobs.max = self.mobs.max.clamp(1, 200);
         self.mobs.initial = self.mobs.initial.min(self.mobs.max);
 

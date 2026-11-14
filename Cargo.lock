@@ -4505,6 +4505,8 @@ name = "spiderdesk"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "image",
+ "libc",
  "raw-window-handle",
  "serde",
  "toml",

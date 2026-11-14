@@ -35,6 +35,8 @@ pub struct Walker {
     leg: usize,
     falling: bool,
     fall_speed: f32,
+    /// Dono cujas superficies a queda atravessa (mob arremessado de uma janela sacudida).
+    fall_through: Option<SurfaceOwner>,
 }
 
 impl Walker {
@@ -48,6 +50,7 @@ impl Walker {
             leg: 0,
             falling: false,
             fall_speed: 0.0,
+            fall_through: None,
         }
     }
 
@@ -85,6 +88,7 @@ impl Walker {
         self.leg = 0;
         self.falling = false;
         self.fall_speed = 0.0;
+        self.fall_through = None;
     }
 
     pub fn set_route(&mut self, route: Route) {
@@ -92,6 +96,7 @@ impl Walker {
         self.leg = 0;
         self.falling = false;
         self.fall_speed = 0.0;
+        self.fall_through = None;
         self.sync_from_leg();
     }
 
@@ -148,7 +153,17 @@ impl Walker {
         self.leg = 0;
         self.falling = true;
         self.fall_speed = 0.0;
+        self.fall_through = None;
         self.normal = Vec2::new(0.0, -1.0);
+    }
+
+    /// Arremessada da superficie atual (janela sacudida): cai atravessando as bordas da propria
+    /// janela, ate o chao ou o topo de outra janela, e deixa de viajar com a janela de origem.
+    pub fn throw_off(&mut self) {
+        let from = self.owner;
+        self.start_fall();
+        self.fall_through = matches!(from, SurfaceOwner::Window(_)).then_some(from);
+        self.owner = SurfaceOwner::Screen;
     }
 
     /// Passo da queda livre. Devolve o ponto de pouso, se tocou uma superficie.
@@ -158,7 +173,7 @@ impl Walker {
         }
         self.fall_speed += GRAVITY * dt;
         let new_y = self.pos.y + self.fall_speed * dt;
-        let landing = graph.surface_below(self.pos);
+        let landing = graph.surface_below_except(self.pos, self.fall_through);
         match landing {
             Some(l) if new_y >= l.pos.y => {
                 self.place(l, graph);
@@ -339,6 +354,52 @@ mod tests {
         let l = landed.expect("deveria pousar no chao");
         assert!((l.pos.y - 1080.0).abs() < 0.5);
         assert!(!w.is_falling());
+    }
+
+    #[test]
+    fn thrown_off_a_window_falls_through_it_and_stops_following_it() {
+        // janela 1 em cima, janela 2 logo abaixo e mais larga: o pouso e no topo da 2
+        let ws = vec![
+            win(1, 400.0, 200.0, 400.0, 200.0),
+            win(2, 300.0, 600.0, 800.0, 300.0),
+        ];
+        let g = PathGraph::build(screen(), &ws, &BuildParams::default());
+        let top = g.nearest_point(Vec2::new(600.0, 200.0), 3.0).unwrap();
+        let mut w = Walker::new(top.pos);
+        w.place(top, &g);
+        assert_eq!(w.owner, SurfaceOwner::Window(1));
+
+        // queda comum: "pousa" na hora no proprio topo em que ja esta
+        let mut plain = w.clone();
+        plain.start_fall();
+        assert!(plain.update_fall(1.0 / 60.0, &g).is_some());
+        assert!((plain.pos.y - 200.0).abs() < 0.5);
+
+        w.throw_off();
+        assert!(w.is_falling());
+        assert_eq!(w.owner, SurfaceOwner::Screen);
+        // a janela de origem se move durante a queda: o mob nao vai junto
+        let moved = vec![win(1, 900.0, 200.0, 400.0, 200.0), ws[1].clone()];
+        let x = w.pos.x;
+        w.follow_window(&ws, &moved);
+        assert_eq!(w.pos.x, x);
+
+        let mut landed = None;
+        for _ in 0..600 {
+            if let Some(l) = w.update_fall(1.0 / 60.0, &g) {
+                landed = Some(l);
+                break;
+            }
+        }
+        let l = landed.expect("deveria pousar");
+        assert!((l.pos.y - 600.0).abs() < 0.5, "topo da janela 2: {l:?}");
+        assert_eq!(w.owner, SurfaceOwner::Window(2));
+        assert!(!w.is_falling());
+
+        // depois de pousar a excecao acabou: uma nova queda comum respeita todas as superficies
+        w.start_fall();
+        assert!(w.update_fall(1.0 / 60.0, &g).is_some());
+        assert!((w.pos.y - 600.0).abs() < 0.5);
     }
 
     #[test]

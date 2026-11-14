@@ -39,7 +39,12 @@ pub fn capture_if_requested(
         return;
     }
     let waited = now - state.ready_at.unwrap_or(now);
-    if !state.requested && waited >= 2.5 {
+    // `SPIDERDESK_SHOT_AFTER=<s>`: espera mais antes de capturar (cenas que demoram a acontecer)
+    let after = std::env::var("SPIDERDESK_SHOT_AFTER")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(2.5);
+    if !state.requested && waited >= after {
         state.requested = true;
         commands.spawn(Screenshot::primary_window()).observe({
             let path = path.clone();
@@ -64,7 +69,7 @@ pub fn capture_if_requested(
             );
         }
     }
-    if waited >= 6.0 {
+    if waited >= after + 3.5 {
         exit.write(AppExit::Success);
     }
 }

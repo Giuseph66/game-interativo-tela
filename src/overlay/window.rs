@@ -17,6 +17,11 @@ pub struct OverlayGeometry {
     pub origin: IVec2,
     pub size: UVec2,
     pub monitor_scale: f32,
+    /// Origem do monitor escolhido (pedida). `origin` e onde a janela REALMENTE ficou: com
+    /// varias telas o gerenciador de janelas pode coloca-la em outro monitor.
+    requested_origin: IVec2,
+    /// Monitor principal (origem, tamanho) em pixels fisicos do desktop virtual. O painel fica nele.
+    pub primary: Option<(IVec2, UVec2)>,
     attempts: u32,
     stable_frames: u32,
 }
@@ -28,6 +33,8 @@ impl Default for OverlayGeometry {
             origin: IVec2::ZERO,
             size: UVec2::new(1280, 720),
             monitor_scale: 1.0,
+            requested_origin: IVec2::ZERO,
+            primary: None,
             attempts: 0,
             stable_frames: 0,
         }
@@ -55,6 +62,18 @@ impl OverlayGeometry {
         let s = self.size_f32();
         Vec2::new(p.x + s.x * 0.5, s.y * 0.5 - p.y)
     }
+}
+
+/// Retangulo que envolve todos os monitores (origem, tamanho), em pixels fisicos do desktop
+/// virtual. `None` sem monitores.
+pub fn desktop_bounds(monitors: &[(IVec2, UVec2)]) -> Option<(IVec2, UVec2)> {
+    let (first, rest) = monitors.split_first()?;
+    let (mut lo, mut hi) = (first.0, first.0 + first.1.as_ivec2());
+    for (o, s) in rest {
+        lo = lo.min(*o);
+        hi = hi.max(*o + s.as_ivec2());
+    }
+    Some((lo, (hi - lo).max(IVec2::ONE).as_uvec2()))
 }
 
 /// Plugin de janela configurado para o overlay.
@@ -98,8 +117,8 @@ pub fn window_plugin(cfg: &Config) -> WindowPlugin {
     }
 }
 
-/// Dimensiona o overlay para cobrir o monitor principal (menos `bottom_inset_px` de altura),
-/// confirma que o tamanho foi aplicado e so entao mostra a janela.
+/// Dimensiona o overlay para cobrir todos os monitores (`overlay.all_monitors`) ou so o
+/// principal (menos `bottom_inset_px` de altura), confirma que o tamanho foi aplicado e so entao mostra a janela.
 pub fn fit_overlay_window(
     cfg: Res<Config>,
     mut geo: ResMut<OverlayGeometry>,
@@ -129,15 +148,29 @@ pub fn fit_overlay_window(
         return;
     };
 
-    let inset = cfg.overlay.bottom_inset_px;
-    let target = UVec2::new(
-        mon.physical_width.max(64),
-        mon.physical_height.saturating_sub(inset).max(64),
+    let primary = (
+        mon.physical_position,
+        UVec2::new(mon.physical_width, mon.physical_height),
     );
-    let origin = mon.physical_position;
+    let (origin, full) = if cfg.overlay.all_monitors {
+        let all: Vec<(IVec2, UVec2)> = monitors
+            .iter()
+            .map(|(m, _)| {
+                (
+                    m.physical_position,
+                    UVec2::new(m.physical_width, m.physical_height),
+                )
+            })
+            .collect();
+        desktop_bounds(&all).unwrap_or(primary)
+    } else {
+        primary
+    };
+    let inset = cfg.overlay.bottom_inset_px;
+    let target = UVec2::new(full.x.max(64), full.y.saturating_sub(inset).max(64));
 
     // monitor mudou de resolucao/posicao (troca de monitor, docking): refaz
-    if geo.ready && (geo.size != target || geo.origin != origin) {
+    if geo.ready && (geo.size != target || geo.requested_origin != origin) {
         info!(
             "monitor alterado; reajustando overlay para {}x{}",
             target.x, target.y
@@ -152,8 +185,10 @@ pub fn fit_overlay_window(
 
     geo.attempts += 1;
     geo.origin = origin;
+    geo.requested_origin = origin;
     geo.size = target;
     geo.monitor_scale = mon.scale_factor as f32;
+    geo.primary = Some(primary);
 
     if window.position != WindowPosition::At(origin) {
         window.position = WindowPosition::At(origin);
@@ -180,9 +215,56 @@ pub fn fit_overlay_window(
     window.visible = true;
     geo.ready = true;
     info!(
-        "overlay pronto: {}x{} em ({}, {}), escala do monitor {:.2}",
-        target.x, target.y, origin.x, origin.y, geo.monitor_scale
+        "overlay pronto: {}x{} em ({}, {}), {} monitor(es), escala {:.2}",
+        target.x,
+        target.y,
+        origin.x,
+        origin.y,
+        if cfg.overlay.all_monitors {
+            monitors.iter().count()
+        } else {
+            1
+        },
+        geo.monitor_scale
     );
+}
+
+/// Le onde a janela do overlay realmente esta e corrige `origin` (cursor, janelas e painel usam
+/// essa origem). Necessario com mais de um monitor: o GNOME/X11 pode ignorar a posicao pedida.
+pub fn track_overlay_origin(
+    time: Res<Time<Real>>,
+    mut geo: ResMut<OverlayGeometry>,
+    windows: Query<&RawHandleWrapper, With<PrimaryWindow>>,
+    mut last_check: Local<f32>,
+    mut move_attempts: Local<u32>,
+) {
+    if !geo.ready || time.elapsed_secs() - *last_check < 0.5 {
+        return;
+    }
+    *last_check = time.elapsed_secs();
+    let Ok(handle) = windows.single() else { return };
+    let Some(actual) = crate::platform::window_origin(handle) else {
+        return;
+    };
+    // primeiro tenta devolver a janela ao monitor escolhido (algumas vezes); se o sistema
+    // recusar, passa a usar a posicao real
+    if actual != geo.requested_origin && *move_attempts < 3 {
+        *move_attempts += 1;
+        if crate::platform::move_window(handle, geo.requested_origin) {
+            debug!(
+                "overlay fora do monitor pedido; pedindo para mover (tentativa {})",
+                *move_attempts
+            );
+            return;
+        }
+    }
+    if actual != geo.origin {
+        info!(
+            "overlay esta em ({}, {}), nao em ({}, {}) (varios monitores?); ajustando coordenadas",
+            actual.x, actual.y, geo.origin.x, geo.origin.y
+        );
+        geo.origin = actual;
+    }
 }
 
 #[cfg(test)]
@@ -207,6 +289,25 @@ mod tests {
             let back = g.world_to_local(g.local_to_world(p));
             assert!((back - p).length() < 1e-3);
         }
+    }
+
+    #[test]
+    fn desktop_bounds_wraps_all_monitors() {
+        assert_eq!(desktop_bounds(&[]), None);
+        let a = (IVec2::ZERO, UVec2::new(1920, 1080));
+        assert_eq!(desktop_bounds(&[a]), Some(a));
+        // lado a lado (como eDP-1 + HDMI-1)
+        let b = (IVec2::new(1920, 0), UVec2::new(1920, 1080));
+        assert_eq!(
+            desktop_bounds(&[b, a]),
+            Some((IVec2::ZERO, UVec2::new(3840, 1080)))
+        );
+        // monitor a esquerda (coordenada negativa) e mais alto
+        let c = (IVec2::new(-1280, -200), UVec2::new(1280, 1440));
+        assert_eq!(
+            desktop_bounds(&[a, c]),
+            Some((IVec2::new(-1280, -200), UVec2::new(3200, 1440)))
+        );
     }
 
     #[test]

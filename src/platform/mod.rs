@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use bevy::math::Vec2;
+
 use crate::navigation::geometry::Rect;
 
 #[cfg(windows)]
@@ -40,6 +42,116 @@ pub struct DesktopWindow {
     pub state: WindowState,
     pub pid: u32,
     pub title: String,
+}
+
+/// IDs a partir daqui sao **elementos** do desktop que nao sao janelas de aplicativos: icones da
+/// area de trabalho, barra superior... Entram na mesma lista (a posicao na lista e a ordem Z) e
+/// viram superficies como qualquer janela, mas podem ser pequenos (sem o corte de
+/// `navigation.min_window_size_px`).
+pub const ELEMENT_ID_BASE: u64 = 1 << 40;
+
+/// Faixas da tela fora da area util (barra superior, barra de tarefas, dock fixo). Ficam na
+/// frente de tudo na lista de janelas: ninguem anda por cima delas nem atras delas.
+pub const PANEL_ID_BASE: u64 = ELEMENT_ID_BASE + (1 << 38);
+
+impl DesktopWindow {
+    /// Icone, barra ou outro elemento que nao e janela de aplicativo.
+    pub fn is_element(&self) -> bool {
+        self.id >= ELEMENT_ID_BASE
+    }
+
+    /// Faixa reservada pelo sistema (fora da area util das telas).
+    pub fn is_panel(&self) -> bool {
+        self.id >= PANEL_ID_BASE
+    }
+}
+
+/// Faixas de `screen` fora das areas uteis `work` (uma por monitor, mesmas coordenadas):
+/// acima e abaixo de cada area, e os vaos laterais entre elas (docks). Sem areas: nenhuma.
+pub fn panel_strips(screen: Rect, work: &[Rect]) -> Vec<Rect> {
+    let mut out = Vec::new();
+    let usable: Vec<Rect> = work
+        .iter()
+        .filter_map(|w| w.intersection(&screen))
+        .filter(|w| w.width() >= 1.0 && w.height() >= 1.0)
+        .collect();
+    if usable.is_empty() {
+        return out;
+    }
+    let mut push = |r: Rect| {
+        if r.width() >= 1.0 && r.height() >= 1.0 {
+            out.push(r);
+        }
+    };
+    for w in &usable {
+        push(Rect::new(
+            Vec2::new(w.min.x, screen.min.y),
+            Vec2::new(w.max.x, w.min.y),
+        ));
+        push(Rect::new(
+            Vec2::new(w.min.x, w.max.y),
+            Vec2::new(w.max.x, screen.max.y),
+        ));
+    }
+    let mut sorted = usable.clone();
+    sorted.sort_by(|a, b| a.min.x.total_cmp(&b.min.x));
+    let mut x = screen.min.x;
+    for w in &sorted {
+        if w.min.x > x {
+            push(Rect::new(
+                Vec2::new(x, screen.min.y),
+                Vec2::new(w.min.x, screen.max.y),
+            ));
+        }
+        x = x.max(w.max.x);
+    }
+    push(Rect::new(Vec2::new(x, screen.min.y), screen.max));
+    out
+}
+
+/// As faixas reservadas como "janelas" (elementos na frente de tudo).
+pub fn panel_windows(screen: Rect, work: &[Rect]) -> Vec<DesktopWindow> {
+    panel_strips(screen, work)
+        .into_iter()
+        .enumerate()
+        .map(|(i, rect)| DesktopWindow {
+            id: PANEL_ID_BASE + i as u64,
+            rect,
+            raw_rect: rect,
+            state: WindowState::Normal,
+            pid: 0,
+            title: "panel".into(),
+        })
+        .collect()
+}
+
+/// Area util de um canto da tela: a da tela mais a esquerda (canto esquerdo) ou mais a direita.
+/// Sem areas, a tela inteira.
+pub fn corner_area(corner: &str, screen: Rect, work: &[Rect]) -> Rect {
+    let right = corner.contains("right");
+    work.iter()
+        .filter_map(|w| w.intersection(&screen))
+        .filter(|w| w.width() >= 1.0 && w.height() >= 1.0)
+        .min_by(|a, b| {
+            if right {
+                b.max.x.total_cmp(&a.max.x)
+            } else {
+                a.min.x.total_cmp(&b.min.x)
+            }
+        })
+        .unwrap_or(screen)
+}
+
+/// Situacao do ajudante que informa as janelas reais (extensao do GNOME em sessoes Wayland).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelperStatus {
+    /// Esta plataforma ja enxerga as janelas sozinha.
+    NotNeeded,
+    /// Precisa do ajudante e ele nao esta instalado.
+    Missing,
+    /// Instalado, mas o sistema ainda nao o carregou (GNOME: sair da sessao e entrar de novo).
+    NeedsRelogin,
+    Active,
 }
 
 /// Area do monitor em pixels fisicos.
@@ -256,6 +368,42 @@ mod tests {
         let swapped = vec![win(2, 200.0), win(1, 0.0)];
         assert!(!windows_equivalent(&a, &swapped));
         assert!(!windows_equivalent(&a, &a[..1]));
+    }
+
+    #[test]
+    fn panels_are_what_the_work_areas_leave_out() {
+        // como na maquina do usuario: tela 1 com barra de 29 px, tela 2 inteira
+        let screen = Rect::from_xywh(0.0, 0.0, 3840.0, 1080.0);
+        let work = [
+            Rect::from_xywh(1920.0, 0.0, 1920.0, 1080.0),
+            Rect::from_xywh(0.0, 29.0, 1920.0, 1051.0),
+        ];
+        assert_eq!(
+            panel_strips(screen, &work),
+            vec![Rect::from_xywh(0.0, 0.0, 1920.0, 29.0)]
+        );
+        // Windows: barra de tarefas embaixo; dock fixo a esquerda
+        let s = Rect::from_xywh(0.0, 0.0, 1920.0, 1080.0);
+        let w = [Rect::from_xywh(64.0, 0.0, 1856.0, 1040.0)];
+        let p = panel_strips(s, &w);
+        assert_eq!(p.len(), 2, "{p:?}");
+        assert!(p.contains(&Rect::from_xywh(64.0, 1040.0, 1856.0, 40.0)));
+        assert!(p.contains(&Rect::from_xywh(0.0, 0.0, 64.0, 1080.0)));
+        assert!(panel_strips(s, &[]).is_empty());
+        assert!(panel_strips(s, &[s]).is_empty());
+        let ws = panel_windows(screen, &work);
+        assert!(ws[0].is_panel() && ws[0].is_element());
+    }
+
+    #[test]
+    fn corner_area_picks_the_outermost_screen() {
+        let screen = Rect::from_xywh(0.0, 0.0, 3840.0, 1080.0);
+        let left = Rect::from_xywh(0.0, 29.0, 1920.0, 1051.0);
+        let right = Rect::from_xywh(1920.0, 0.0, 1920.0, 1080.0);
+        let work = [right, left];
+        assert_eq!(corner_area("top_left", screen, &work), left);
+        assert_eq!(corner_area("bottom_right", screen, &work), right);
+        assert_eq!(corner_area("top_left", screen, &[]), screen);
     }
 
     #[test]

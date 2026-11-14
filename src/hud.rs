@@ -31,6 +31,16 @@ pub struct HitFx {
     pub strike: Strike,
 }
 
+/// Texto flutuante avulso (ninho construido, sacudida, dano de queda, mordida).
+#[derive(Message, Debug, Clone)]
+pub struct FloatText {
+    /// Ponto de partida em px locais do overlay.
+    pub at: Vec2,
+    pub text: String,
+    pub color: Color,
+    pub size: f32,
+}
+
 #[derive(Resource)]
 pub struct SwordCursors(HashMap<Sword, Handle<Image>>);
 
@@ -102,6 +112,7 @@ pub fn setup_hud(
 }
 
 /// Cursor de espada sobre mobs; cursor normal fora deles.
+#[allow(clippy::too_many_arguments)]
 pub fn update_sword_cursor(
     mut commands: Commands,
     geo: Res<OverlayGeometry>,
@@ -232,6 +243,41 @@ pub fn spawn_hit_fx(
     }
 }
 
+/// Textos flutuantes avulsos: sobem e somem como os numeros de dano.
+pub fn spawn_float_text(
+    mut commands: Commands,
+    mut texts: MessageReader<FloatText>,
+    root: Query<Entity, With<HudRoot>>,
+) {
+    let Ok(root) = root.single() else {
+        texts.clear();
+        return;
+    };
+    for t in texts.read() {
+        let popup = commands
+            .spawn((
+                Popup {
+                    age: 0.0,
+                    origin: t.at,
+                    color: t.color,
+                },
+                Node {
+                    position_type: PositionType::Absolute,
+                    ..default()
+                },
+                Text::new(t.text.clone()),
+                TextFont {
+                    font_size: FontSize::Px(t.size),
+                    ..default()
+                },
+                TextColor(t.color),
+                TextShadow::default(),
+            ))
+            .id();
+        commands.entity(root).add_child(popup);
+    }
+}
+
 /// Anima/remove numeros de dano e faixas; mantem o laco rapido enquanto houver algo animando.
 #[allow(clippy::too_many_arguments)]
 pub fn animate_fx(
@@ -276,7 +322,7 @@ pub fn animate_fx(
 }
 
 /// Barra de vida sobre cada mob atingido recentemente.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_health_bars(
     mut commands: Commands,
     cfg: Res<Config>,

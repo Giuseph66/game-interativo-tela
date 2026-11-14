@@ -1,5 +1,5 @@
-//! Varios mobs na tela: catalogo de tipos (aranha procedural + cada `.glb` em `assets/models/`),
-//! comandos (spawnar, matar todos, remover todos, sair) e criacao das entidades.
+//! Varios mobs na tela: catalogo de tipos (bichos procedurais + opcionalmente cada `.glb` em
+//! `assets/models/`), comandos (spawnar, matar todos, remover todos, sair) e criacao das entidades.
 
 use std::path::Path;
 
@@ -8,14 +8,15 @@ use bevy::prelude::*;
 
 use crate::config::Config;
 use crate::creature::glb::{GlbKindData, PendingModel};
+use crate::creature::species::{Profile, Species};
 use crate::creature::spider::{Mob, SpiderSim};
 use crate::overlay::EmergencyRes;
 
 /// De onde vem o modelo de um tipo de mob.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MobSource {
-    /// Aranha feita de primitivas (sempre disponivel).
-    Procedural,
+    /// Bicho feito de primitivas com animacao procedural (sempre disponivel).
+    Procedural(Species),
     /// Caminho relativo a `assets/` (ex.: `models/Rat.glb`).
     Glb(String),
 }
@@ -38,10 +39,10 @@ pub struct MobKind {
 }
 
 impl MobKind {
-    pub fn procedural() -> Self {
+    pub fn procedural(species: Species) -> Self {
         Self {
-            label: "Aranha procedural".into(),
-            source: MobSource::Procedural,
+            label: species.label().into(),
+            source: MobSource::Procedural(species),
             yaw_deg: 0.0,
             scale: 1.0,
             handle: None,
@@ -96,13 +97,19 @@ impl MobCatalog {
         if let Ok(i) = n.parse::<usize>() {
             return (i < self.kinds.len()).then_some(i);
         }
-        self.kinds.iter().position(|k| {
-            k.label.to_ascii_lowercase() == n
-                || matches!(&k.source, MobSource::Glb(p) if Path::new(p)
-                    .file_stem()
-                    .is_some_and(|s| s.to_string_lossy().to_ascii_lowercase() == n))
-                || (n == "procedural" && k.source == MobSource::Procedural)
-        })
+        // rotulo exato primeiro; depois nome do arquivo GLB; por ultimo apelidos da especie
+        let by_label = |k: &MobKind| k.label.to_ascii_lowercase() == n;
+        let by_file = |k: &MobKind| {
+            matches!(&k.source, MobSource::Glb(p) if Path::new(p)
+                .file_stem()
+                .is_some_and(|s| s.to_string_lossy().to_ascii_lowercase() == n))
+        };
+        let by_alias = |k: &MobKind| matches!(k.source, MobSource::Procedural(sp) if Species::from_name(&n) == Some(sp));
+        self.kinds
+            .iter()
+            .position(by_label)
+            .or_else(|| self.kinds.iter().position(by_file))
+            .or_else(|| self.kinds.iter().position(by_alias))
     }
 
     /// Semente distinta (e reprodutivel com `behavior.seed`) para cada mob criado.
@@ -114,15 +121,25 @@ impl MobCatalog {
     }
 }
 
-/// Monta o catalogo: tipo 0 = aranha procedural; depois cada `assets/models/*.glb` (ordem
-/// alfabetica). Yaw/escala vem do preset de `config/models/*.toml` cujo `spider.model` aponta
-/// para o arquivo; se nao houver, do `[spider]` da configuracao (quando e o mesmo modelo) ou 0/1.
+/// Nomes de `mobs.initial_kind` que sorteiam uma especie para cada mob inicial.
+pub const MIXED_KIND: [&str; 4] = ["misto", "mix", "aleatorio", "random"];
+
+/// Monta o catalogo: primeiro os bichos procedurais ([`Species::ALL`]); com `mobs.include_glb`,
+/// depois cada `assets/models/*.glb` (ordem alfabetica). Yaw/escala do GLB vem do preset de
+/// `config/models/*.toml` cujo `spider.model` aponta para o arquivo; se nao houver, do `[spider]`
+/// da configuracao (quando e o mesmo modelo) ou 0/1. O tipo padrao e `mobs.initial_kind`.
 pub fn discover_kinds(
     asset_root: Option<&Path>,
     presets_dir: Option<&Path>,
     cfg: &Config,
 ) -> (Vec<MobKind>, usize) {
-    let mut kinds = vec![MobKind::procedural()];
+    let mut kinds: Vec<MobKind> = Species::ALL.into_iter().map(MobKind::procedural).collect();
+    let mut default_kind = Species::from_name(&cfg.mobs.initial_kind)
+        .map(Species::index)
+        .unwrap_or(0);
+    if !cfg.mobs.include_glb {
+        return (kinds, default_kind);
+    }
 
     // presets: model -> (rotulo, yaw, escala)
     let mut presets: Vec<(String, String, f32, f32)> = Vec::new();
@@ -165,7 +182,6 @@ pub fn discover_kinds(
         .unwrap_or_default();
     files.sort_by_key(|f| f.to_ascii_lowercase());
 
-    let mut default_kind = 0;
     for file in files {
         let rel = format!("models/{file}");
         let stem = Path::new(&file)
@@ -184,7 +200,7 @@ pub fn discover_kinds(
         } else {
             MobKind::glb(stem, rel.clone(), 0.0, 1.0)
         };
-        if cfg.spider.model == rel {
+        if cfg.spider.model == rel && Species::from_name(&cfg.mobs.initial_kind).is_none() {
             default_kind = kinds.len();
         }
         kinds.push(kind);
@@ -216,11 +232,20 @@ pub fn spawn_mob(
     {
         k.handle = Some(asset_server.load(path.clone()));
     }
+    let profile = match k.source {
+        MobSource::Procedural(sp) => {
+            // cada individuo varia ate 8% de tamanho (o hitbox acompanha)
+            let mut p = sp.profile();
+            p.size *= 0.92 + 0.16 * ((seed >> 11) % 1000) as f32 / 1000.0;
+            p
+        }
+        MobSource::Glb(_) => Profile::default(),
+    };
     Some(
         commands
             .spawn((
                 Mob {
-                    sim: SpiderSim::new(seed),
+                    sim: SpiderSim::with_profile(seed, profile),
                     kind,
                 },
                 PendingModel,
@@ -243,8 +268,15 @@ pub fn spawn_initial_mobs(
         return;
     }
     let kind = catalog.default_kind;
-    for _ in 0..cfg.mobs.initial {
-        spawn_mob(&mut commands, &mut catalog, &asset_server, kind);
+    let mixed = MIXED_KIND.contains(&cfg.mobs.initial_kind.trim().to_ascii_lowercase().as_str());
+    for i in 0..cfg.mobs.initial {
+        let k = if mixed {
+            let n = Species::ALL.len() as u64;
+            ((catalog.seed_base.wrapping_add(i as u64 * 7)) % n) as usize
+        } else {
+            kind
+        };
+        spawn_mob(&mut commands, &mut catalog, &asset_server, k);
     }
     let mut extra = 0u32;
     for name in &opts.spawn {
@@ -261,11 +293,15 @@ pub fn spawn_initial_mobs(
         "{} tipos de mob disponiveis; {} inicial(is) do tipo \"{}\"",
         catalog.kinds.len(),
         cfg.mobs.initial,
-        catalog
-            .kinds
-            .get(kind)
-            .map(|k| k.label.as_str())
-            .unwrap_or("?")
+        if mixed {
+            "misto"
+        } else {
+            catalog
+                .kinds
+                .get(kind)
+                .map(|k| k.label.as_str())
+                .unwrap_or("?")
+        }
     );
 }
 
@@ -332,8 +368,10 @@ mod tests {
         d
     }
 
+    const N: usize = Species::ALL.len();
+
     #[test]
-    fn catalog_lists_procedural_then_glbs_with_presets() {
+    fn catalog_lists_species_then_glbs_with_presets() {
         let assets = temp_dir("assets");
         for f in ["Rat.glb", "ant.glb", "notes.txt"] {
             std::fs::write(assets.join("models").join(f), b"x").unwrap();
@@ -347,59 +385,75 @@ mod tests {
         std::fs::write(presets.join("quebrado.toml"), "[spider\n").unwrap();
 
         let mut cfg = Config::default();
+        cfg.mobs.include_glb = true;
+        cfg.mobs.initial_kind = String::new();
         cfg.spider.model = "models/ant.glb".into();
         cfg.spider.glb_yaw_deg = 45.0;
         let (kinds, default) = discover_kinds(Some(&assets), Some(&presets), &cfg);
 
-        assert_eq!(kinds.len(), 3, "procedural + 2 glb (txt ignorado)");
-        assert_eq!(kinds[0].source, MobSource::Procedural);
+        assert_eq!(kinds.len(), N + 2, "especies + 2 glb (txt ignorado)");
+        for (k, s) in kinds.iter().zip(Species::ALL) {
+            assert_eq!(k.source, MobSource::Procedural(s));
+            assert_eq!(k.label, s.label());
+        }
         // ordem alfabetica sem diferenciar caixa: ant, Rat
-        assert_eq!(kinds[1].source, MobSource::Glb("models/ant.glb".into()));
+        assert_eq!(kinds[N].source, MobSource::Glb("models/ant.glb".into()));
         assert_eq!(
-            kinds[1].yaw_deg, 45.0,
+            kinds[N].yaw_deg, 45.0,
             "sem preset: usa [spider] quando e o mesmo modelo"
         );
-        assert_eq!(kinds[2].label, "rato", "rotulo vem do nome do preset");
-        assert_eq!((kinds[2].yaw_deg, kinds[2].scale), (90.0, 1.5));
-        assert_eq!(default, 1, "spider.model existente vira o tipo padrao");
+        assert_eq!(kinds[N + 1].label, "rato", "rotulo vem do nome do preset");
+        assert_eq!((kinds[N + 1].yaw_deg, kinds[N + 1].scale), (90.0, 1.5));
+        assert_eq!(default, N, "spider.model existente vira o tipo padrao");
+
+        // initial_kind com nome de especie tem prioridade
+        cfg.mobs.initial_kind = "barata".into();
+        let (_, default) = discover_kinds(Some(&assets), Some(&presets), &cfg);
+        assert_eq!(default, Species::Barata.index());
     }
 
     #[test]
-    fn catalog_without_assets_has_only_procedural() {
-        let (kinds, default) = discover_kinds(None, None, &Config::default());
-        assert_eq!(kinds.len(), 1);
-        assert_eq!(default, 0);
+    fn glbs_are_ignored_by_default() {
+        let assets = temp_dir("assets-default");
+        std::fs::write(assets.join("models").join("Rat.glb"), b"x").unwrap();
+        let (kinds, default) = discover_kinds(Some(&assets), None, &Config::default());
+        assert_eq!(kinds.len(), N);
+        assert_eq!(default, Species::Viuva.index());
     }
 
     #[test]
-    fn find_by_label_file_or_index() {
-        let kinds = vec![
-            MobKind::procedural(),
-            MobKind::glb("rat".into(), "models/Rat.glb".into(), 90.0, 1.0),
-            MobKind::glb(
-                "wolf_spider".into(),
-                "models/wolf_spider_rigged.glb".into(),
-                -90.0,
-                1.0,
-            ),
-        ];
+    fn find_by_label_alias_file_or_index() {
+        let mut kinds: Vec<MobKind> = Species::ALL.into_iter().map(MobKind::procedural).collect();
+        kinds.push(MobKind::glb(
+            "wolf_spider".into(),
+            "models/wolf_spider_rigged.glb".into(),
+            -90.0,
+            1.0,
+        ));
         let c = MobCatalog::new(kinds, 0, 1);
-        assert_eq!(c.find("RAT"), Some(1));
+        assert_eq!(c.find("RATO"), Some(Species::Rato.index()));
+        assert_eq!(c.find("rat"), Some(Species::Rato.index()), "alias");
+        assert_eq!(c.find("Aranha-lobo"), Some(Species::AranhaLobo.index()));
+        assert_eq!(c.find("procedural"), Some(Species::Viuva.index()));
         assert_eq!(
             c.find("wolf_spider_rigged"),
-            Some(2),
+            Some(N),
             "pelo nome do arquivo"
         );
-        assert_eq!(c.find("procedural"), Some(0));
+        assert_eq!(
+            c.find("wolf_spider"),
+            Some(N),
+            "rotulo do GLB vence o alias"
+        );
         assert_eq!(c.find("2"), Some(2));
-        assert_eq!(c.find("9"), None);
+        assert_eq!(c.find("99"), None);
         assert_eq!(c.find("dragao"), None);
     }
 
     #[test]
     fn seeds_are_distinct_and_reproducible() {
-        let mut a = MobCatalog::new(vec![MobKind::procedural()], 0, 42);
-        let mut b = MobCatalog::new(vec![MobKind::procedural()], 0, 42);
+        let mut a = MobCatalog::new(vec![MobKind::procedural(Species::Viuva)], 0, 42);
+        let mut b = MobCatalog::new(vec![MobKind::procedural(Species::Viuva)], 0, 42);
         let sa: Vec<u64> = (0..5).map(|_| a.next_seed()).collect();
         let sb: Vec<u64> = (0..5).map(|_| b.next_seed()).collect();
         assert_eq!(sa, sb);

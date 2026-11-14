@@ -43,7 +43,17 @@ pub struct PanelButton(Color);
 pub fn panel_height(kinds: usize) -> f32 {
     // titulo + status + rotulo + botoes de spawn + linha de acoes + sair + dica + margens
     let rows = kinds as f32 + 2.0;
-    46.0 + 26.0 + 36.0 + 22.0 + rows * (BUTTON_H + GAP) + 26.0 + 24.0
+    // (+ linha da cacada, + 2 linhas de aviso, + ate 10 linhas do heroi, + botoes do heroi e do
+    // ajudante de janelas)
+    46.0 + 26.0
+        + 18.0
+        + 36.0
+        + 10.0 * 16.0
+        + 36.0
+        + 22.0
+        + (rows + 2.0) * (BUTTON_H + GAP)
+        + 26.0
+        + 24.0
 }
 
 pub fn spawn_panel(
@@ -180,6 +190,24 @@ pub fn spawn_panel(
 
     children.push(button(
         &mut commands,
+        "Heroi (WASD): liga/desliga",
+        BTN,
+        0.0,
+        PanelAction::ToggleHero,
+    ));
+    // GNOME em Wayland: sem o ajudante os mobs nao enxergam as janelas dos apps
+    if crate::platform::helper_status() == crate::platform::HelperStatus::Missing {
+        children.push(button(
+            &mut commands,
+            "Andar nas janelas (instalar)",
+            BTN,
+            0.0,
+            PanelAction::InstallHelper,
+        ));
+    }
+
+    children.push(button(
+        &mut commands,
         "Sair do SpiderDesk",
         BTN_DANGER,
         0.0,
@@ -210,7 +238,15 @@ fn text(s: &str, size: f32, color: Color) -> impl Bundle {
 pub enum PanelAction {
     Mob(MobCommand),
     Minimize,
+    /// Instala o ajudante que informa as janelas reais (extensao do GNOME em Wayland).
+    InstallHelper,
+    /// Liga/desliga o heroi (personagem do teclado).
+    ToggleHero,
 }
+
+/// Aviso mostrado no fim do estado do painel (resultado da instalacao do ajudante etc.).
+#[derive(Resource, Default, Debug)]
+pub struct PanelNotice(pub String);
 
 /// Botao com texto. `width`: > 0 fixa, 0 = largura total, < 0 = divide a linha (flex).
 fn button(
@@ -254,8 +290,33 @@ fn on_panel_activate(
     actions: Query<&PanelAction>,
     mut cmds: MessageWriter<MobCommand>,
     mut windows: Query<&mut Window, With<PanelWindow>>,
+    mut notice: ResMut<PanelNotice>,
+    mut hero: Option<ResMut<crate::hero::HeroState>>,
 ) {
     match actions.get(activate.entity) {
+        Ok(PanelAction::ToggleHero) => {
+            if let Some(hero) = hero.as_mut() {
+                hero.enabled = !hero.enabled;
+                info!(
+                    "heroi {}",
+                    if hero.enabled { "ligado" } else { "desligado" }
+                );
+            }
+        }
+        Ok(PanelAction::InstallHelper) => {
+            notice.0 = match crate::platform::install_helper() {
+                Ok(()) => {
+                    info!(
+                        "ajudante de janelas instalado; vale apos sair da sessao e entrar de novo"
+                    );
+                    "Instalado! Saia da sessao e\nentre de novo para valer.".into()
+                }
+                Err(e) => {
+                    warn!("instalacao do ajudante de janelas falhou: {e}");
+                    format!("Instalacao falhou: {e}")
+                }
+            };
+        }
         Ok(PanelAction::Mob(c)) => {
             cmds.write(*c);
         }
@@ -332,9 +393,11 @@ pub fn fit_panel(
     geo: Res<OverlayGeometry>,
     catalog: Res<MobCatalog>,
     mut windows: Query<&mut Window, With<PanelWindow>>,
-    mut done: Local<bool>,
+    mut placed_for: Local<Option<IVec2>>,
 ) {
-    if *done || !geo.ready {
+    // (re)posiciona quando o overlay fica pronto e quando descobrimos que ele esta em outro
+    // monitor (o painel acompanha a tela onde os mobs andam)
+    if !geo.ready || *placed_for == Some(geo.origin) {
         return;
     }
     let Ok(mut w) = windows.single_mut() else {
@@ -345,28 +408,58 @@ pub fn fit_panel(
     w.resolution
         .set_physical_resolution(size.x.round() as u32, size.y.round() as u32);
     let margin = (24.0 * scale) as i32;
+    // com o overlay cobrindo varias telas, o painel fica no monitor principal
+    let (area_origin, area_size) = match geo.primary {
+        Some(p) if geo.size.x > p.1.x || geo.size.y > p.1.y => p,
+        _ => (geo.origin, geo.size),
+    };
     w.position = WindowPosition::At(IVec2::new(
-        geo.origin.x + geo.size.x as i32 - size.x as i32 - margin,
-        geo.origin.y + margin + (40.0 * scale) as i32,
+        area_origin.x + area_size.x as i32 - size.x as i32 - margin,
+        area_origin.y + margin + (40.0 * scale) as i32,
     ));
     w.visible = true;
-    *done = true;
+    *placed_for = Some(geo.origin);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_status(
     cfg: Res<crate::config::Config>,
     score: Res<Score>,
     progress: Res<crate::game::Progress>,
     mobs: Query<&Mob>,
+    heist: Option<Res<crate::web::HeistHud>>,
+    notice: Option<Res<PanelNotice>>,
+    hero: Option<Res<crate::hero::HeroHud>>,
+    time: Res<Time<Real>>,
     mut texts: Query<&mut Text, With<StatusText>>,
     mut last: Local<(usize, u32, u32, u32)>,
+    mut last_heist: Local<String>,
 ) {
     let n = mobs.iter().count();
     let now = (n, score.kills, score.points, progress.xp);
-    if *last == now {
+    // contagem regressiva da aranha que rouba o mouse (linha extra; vazia = recurso desligado)
+    let mut heist = heist.map(|h| h.line.clone()).unwrap_or_default();
+    // aviso: resultado da instalacao, ou ajudante instalado mas ainda nao carregado pelo GNOME
+    let mut note = notice.map(|n| n.0.clone()).unwrap_or_default();
+    if note.is_empty()
+        && time.elapsed_secs() > 8.0
+        && crate::platform::helper_status() == crate::platform::HelperStatus::NeedsRelogin
+    {
+        note = "Janelas reais: saia da sessao\ne entre de novo.".into();
+    }
+    for extra in [hero.map(|h| h.line.clone()).unwrap_or_default(), note] {
+        if !extra.is_empty() {
+            if !heist.is_empty() {
+                heist.push('\n');
+            }
+            heist.push_str(&extra);
+        }
+    }
+    if *last == now && *last_heist == heist {
         return;
     }
     *last = now;
+    last_heist.clone_from(&heist);
     let sword = progress.sword;
     let next = match sword.next() {
         Some(nx) => format!(
@@ -379,11 +472,12 @@ pub fn update_status(
     };
     for mut t in &mut texts {
         **t = format!(
-            "Mobs: {n}   Abates: {}   Pontos: {}\nEspada: {} (dano {})\nXP: {next}",
+            "Mobs: {n}   Abates: {}   Pontos: {}\nEspada: {} (dano {})\nXP: {next}{}{heist}",
             score.kills,
             score.points,
             sword.label(),
-            sword.damage(&cfg.combat)
+            sword.damage(&cfg.combat),
+            if heist.is_empty() { "" } else { "\n" }
         );
     }
 }

@@ -36,14 +36,18 @@ pub struct HitCircle {
 #[derive(Resource, Debug, Default)]
 pub struct HitTargets {
     pub circles: Vec<HitCircle>,
+    /// Captura o mouse na tela inteira (a aranha esta com o cursor): nada atravessa o overlay.
+    pub capture_all: bool,
 }
 
 impl HitTargets {
     /// O ponto esta dentro de algum alvo (raio multiplicado por `scale`)?
     pub fn contains(&self, p: Vec2, scale: f32) -> bool {
-        self.circles
-            .iter()
-            .any(|c| c.center.distance(p) <= c.radius * scale)
+        self.capture_all
+            || self
+                .circles
+                .iter()
+                .any(|c| c.center.distance(p) <= c.radius * scale)
     }
 }
 
@@ -56,6 +60,9 @@ pub struct NativeRegion {
 
 /// Quadrados (x, y, largura, altura) que cobrem cada circulo clicavel, em px locais.
 pub fn region_rects(targets: &HitTargets) -> Vec<(i32, i32, u32, u32)> {
+    if targets.capture_all {
+        return vec![(0, 0, 32_000, 32_000)];
+    }
     targets
         .circles
         .iter()
@@ -187,7 +194,28 @@ mod tests {
                 center: Vec2::new(500.0, 400.0),
                 radius: 30.0,
             }],
+            capture_all: false,
         }
+    }
+
+    #[test]
+    fn capture_all_takes_the_whole_screen() {
+        let t = HitTargets {
+            capture_all: true,
+            ..Default::default()
+        };
+        assert_eq!(region_rects(&t), vec![(0, 0, 32_000, 32_000)]);
+        assert!(want_hit_test(
+            false,
+            Some(Vec2::new(5.0, 900.0)),
+            &t,
+            1.3,
+            false
+        ));
+        assert!(
+            !want_hit_test(false, None, &t, 1.3, false),
+            "sem cursor: atravessa"
+        );
     }
 
     #[test]

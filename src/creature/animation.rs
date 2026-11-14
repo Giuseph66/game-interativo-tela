@@ -497,7 +497,11 @@ mod tests {
             let stance_time = stance / freq;
             assert!((v * stance_time - STRIDE).abs() < 1e-5);
         }
-        assert_eq!(gait_frequency(3.0, 0.0, 0.5), 0.0, "passo nulo nao divide por zero");
+        assert_eq!(
+            gait_frequency(3.0, 0.0, 0.5),
+            0.0,
+            "passo nulo nao divide por zero"
+        );
     }
 
     #[test]

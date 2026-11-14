@@ -5,4 +5,5 @@ pub mod behavior;
 pub mod effects;
 pub mod glb;
 pub mod procedural;
+pub mod species;
 pub mod spider;

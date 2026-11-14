@@ -10,6 +10,9 @@ use bevy::math::{EulerRot, Quat, Vec2, Vec3};
 
 use super::animation::LegRest;
 
+/// Velocidade (unid./s) a partir da qual o passo tem o tamanho cheio.
+pub const GAIT_RAMP: f32 = 1.2;
+
 /// Maximo de circulos clicaveis por bicho.
 pub const MAX_HITS: usize = 3;
 
@@ -137,7 +140,7 @@ impl Species {
             Species::Rato => Profile {
                 size: 1.5,
                 stride: 0.36,
-                run_stride: 0.9,
+                run_stride: 0.5,
                 run_lo: 2.8,
                 run_hi: 5.0,
                 stance: 0.6,
@@ -199,6 +202,12 @@ impl Profile {
     /// Passo para uma velocidade (cresce ao correr; a frequencia acompanha, sem patinar).
     pub fn stride_at(&self, speed_units: f32) -> f32 {
         self.stride * (1.0 + self.run_stride * self.run_blend(speed_units))
+    }
+
+    /// Passo efetivamente animado: cresce linearmente ate `GAIT_RAMP` unid./s (parado = 0),
+    /// de modo que a frequencia (`stance * v / passo`) fique finita perto de zero.
+    pub fn gait_stride(&self, speed_units: f32) -> f32 {
+        self.stride_at(speed_units) * (speed_units / GAIT_RAMP).clamp(0.0, 1.0)
     }
 
     pub fn max_stride(&self) -> f32 {
@@ -637,24 +646,67 @@ fn viuva() -> BodyPlan {
     let h = 0.55;
     let mut b = Builder::new();
     // cefalotorax + abdomen globoso preto brilhante
-    b.ell(Body, 0, Vec3::new(0.18, h + 0.02, 0.0), Vec3::new(0.31, 0.2, 0.26))
-        .ell(Rear, 0, Vec3::new(-0.42, h + 0.1, 0.0), Vec3::new(0.48, 0.4, 0.4))
-        // ampulheta vermelha (vista de cima/traseira) + pontinhos
-        .ell(Rear, 3, Vec3::new(-0.42, h + 0.48, 0.0), Vec3::new(0.12, 0.035, 0.07))
-        .ell(Rear, 3, Vec3::new(-0.6, h + 0.43, 0.0), Vec3::new(0.08, 0.035, 0.05))
-        .ell(Rear, 3, Vec3::new(-0.24, h + 0.43, 0.0), Vec3::new(0.07, 0.035, 0.045))
-        // fiandeiras
-        .cone(Rear, 4, Vec3::new(-0.86, h + 0.06, 0.0), Vec3::new(-0.97, h + 0.02, 0.0), 0.05)
-        // olhos (2 grandes + 2 pequenos) e queliceras
-        .ell_pair(Head, 2, Vec3::new(0.45, h + 0.13, 0.06), Vec3::splat(0.045), Quat::IDENTITY)
-        .ell_pair(Head, 2, Vec3::new(0.4, h + 0.17, 0.1), Vec3::splat(0.028), Quat::IDENTITY)
-        .cone_pair(
-            Head,
-            4,
-            Vec3::new(0.44, h - 0.02, 0.05),
-            Vec3::new(0.55, h - 0.17, 0.035),
-            0.045,
-        );
+    b.ell(
+        Body,
+        0,
+        Vec3::new(0.18, h + 0.02, 0.0),
+        Vec3::new(0.31, 0.2, 0.26),
+    )
+    .ell(
+        Rear,
+        0,
+        Vec3::new(-0.42, h + 0.1, 0.0),
+        Vec3::new(0.48, 0.4, 0.4),
+    )
+    // ampulheta vermelha (vista de cima/traseira) + pontinhos
+    .ell(
+        Rear,
+        3,
+        Vec3::new(-0.42, h + 0.48, 0.0),
+        Vec3::new(0.12, 0.035, 0.07),
+    )
+    .ell(
+        Rear,
+        3,
+        Vec3::new(-0.6, h + 0.43, 0.0),
+        Vec3::new(0.08, 0.035, 0.05),
+    )
+    .ell(
+        Rear,
+        3,
+        Vec3::new(-0.24, h + 0.43, 0.0),
+        Vec3::new(0.07, 0.035, 0.045),
+    )
+    // fiandeiras
+    .cone(
+        Rear,
+        4,
+        Vec3::new(-0.86, h + 0.06, 0.0),
+        Vec3::new(-0.97, h + 0.02, 0.0),
+        0.05,
+    )
+    // olhos (2 grandes + 2 pequenos) e queliceras
+    .ell_pair(
+        Head,
+        2,
+        Vec3::new(0.45, h + 0.13, 0.06),
+        Vec3::splat(0.045),
+        Quat::IDENTITY,
+    )
+    .ell_pair(
+        Head,
+        2,
+        Vec3::new(0.4, h + 0.17, 0.1),
+        Vec3::splat(0.028),
+        Quat::IDENTITY,
+    )
+    .cone_pair(
+        Head,
+        4,
+        Vec3::new(0.44, h - 0.02, 0.05),
+        Vec3::new(0.55, h - 0.17, 0.035),
+        0.045,
+    );
     // palpos (pernas curtas na frente)
     b.chain_pair(
         Head,
@@ -672,10 +724,10 @@ fn viuva() -> BodyPlan {
             hip_x: [0.3, 0.11, -0.1, -0.3],
             hip_z: 0.14,
             foot_x: [0.75, 0.4, -0.3, -0.72],
-            foot_z: [0.7, 0.9, 0.9, 0.72],
+            foot_z: [0.62, 0.8, 0.8, 0.64],
             l1: [0.62, 0.55, 0.55, 0.62],
             l2: [0.78, 0.7, 0.7, 0.78],
-            widths: [0.045, 0.032, 0.02],
+            widths: [0.062, 0.046, 0.028],
             paints: [1, 1, 1],
         },
     );
@@ -685,16 +737,16 @@ fn viuva() -> BodyPlan {
         Vec3::new(0.3, h, 0.0),
         Vec3::new(-0.02, h + 0.04, 0.0),
         vec![
-            paint([0.035, 0.03, 0.035], 0.22, 0.15),  // 0 corpo preto brilhante
-            paint([0.06, 0.05, 0.05], 0.35, 0.1),     // 1 pernas
+            paint([0.035, 0.03, 0.035], 0.22, 0.15), // 0 corpo preto brilhante
+            paint([0.1, 0.085, 0.08], 0.3, 0.15),    // 1 pernas
             Paint {
                 rgb: [0.9, 0.1, 0.05],
                 rough: 0.5,
                 metal: 0.0,
                 glow: 6.0,
             }, // 2 olhos
-            paint([0.82, 0.05, 0.03], 0.35, 0.0),     // 3 ampulheta
-            paint([0.14, 0.06, 0.04], 0.4, 0.0),      // 4 queliceras
+            paint([0.82, 0.05, 0.03], 0.35, 0.0),    // 3 ampulheta
+            paint([0.14, 0.06, 0.04], 0.4, 0.0),     // 4 queliceras
         ],
         Motion {
             lift: 0.4,
@@ -722,14 +774,54 @@ fn aranha_lobo() -> BodyPlan {
         Vec3::new(0.36, 0.2, 0.27),
         rot(0.08, 0.0, 0.0),
     )
-    .ell(Body, 2, Vec3::new(0.12, h + 0.2, 0.0), Vec3::new(0.3, 0.05, 0.07))
-    .ell_pair(Body, 1, Vec3::new(0.1, h + 0.17, 0.15), Vec3::new(0.26, 0.05, 0.05), Quat::IDENTITY)
+    .ell(
+        Body,
+        2,
+        Vec3::new(0.12, h + 0.2, 0.0),
+        Vec3::new(0.3, 0.05, 0.07),
+    )
+    .ell_pair(
+        Body,
+        1,
+        Vec3::new(0.1, h + 0.17, 0.15),
+        Vec3::new(0.26, 0.05, 0.05),
+        Quat::IDENTITY,
+    )
     // cabeca elevada com os olhos grandes
-    .ell(Head, 0, Vec3::new(0.42, h + 0.1, 0.0), Vec3::new(0.16, 0.15, 0.17))
-    .ell_pair(Head, 3, Vec3::new(0.48, h + 0.23, 0.065), Vec3::splat(0.05), Quat::IDENTITY)
-    .ell_pair(Head, 3, Vec3::new(0.56, h + 0.15, 0.05), Vec3::splat(0.032), Quat::IDENTITY)
-    .ell_pair(Head, 3, Vec3::new(0.58, h + 0.07, 0.03), Vec3::splat(0.02), Quat::IDENTITY)
-    .ell_pair(Head, 3, Vec3::new(0.57, h + 0.07, 0.085), Vec3::splat(0.02), Quat::IDENTITY)
+    .ell(
+        Head,
+        0,
+        Vec3::new(0.42, h + 0.1, 0.0),
+        Vec3::new(0.16, 0.15, 0.17),
+    )
+    .ell_pair(
+        Head,
+        3,
+        Vec3::new(0.48, h + 0.23, 0.065),
+        Vec3::splat(0.05),
+        Quat::IDENTITY,
+    )
+    .ell_pair(
+        Head,
+        3,
+        Vec3::new(0.56, h + 0.15, 0.05),
+        Vec3::splat(0.032),
+        Quat::IDENTITY,
+    )
+    .ell_pair(
+        Head,
+        3,
+        Vec3::new(0.58, h + 0.07, 0.03),
+        Vec3::splat(0.02),
+        Quat::IDENTITY,
+    )
+    .ell_pair(
+        Head,
+        3,
+        Vec3::new(0.57, h + 0.07, 0.085),
+        Vec3::splat(0.02),
+        Quat::IDENTITY,
+    )
     .cone_pair(
         Head,
         1,
@@ -738,11 +830,39 @@ fn aranha_lobo() -> BodyPlan {
         0.055,
     )
     // abdomen oval com marca cardiaca escura e divisas claras
-    .ell(Rear, 0, Vec3::new(-0.45, h + 0.06, 0.0), Vec3::new(0.42, 0.29, 0.3))
-    .ell(Rear, 1, Vec3::new(-0.36, h + 0.3, 0.0), Vec3::new(0.24, 0.05, 0.08))
-    .ell_pair(Rear, 2, Vec3::new(-0.62, h + 0.26, 0.08), Vec3::new(0.1, 0.04, 0.06), rot(0.0, 0.5, 0.0))
-    .ell_pair(Rear, 2, Vec3::new(-0.74, h + 0.2, 0.06), Vec3::new(0.07, 0.035, 0.05), rot(0.0, 0.5, 0.0))
-    .cone(Rear, 1, Vec3::new(-0.84, h + 0.04, 0.0), Vec3::new(-0.94, h + 0.0, 0.0), 0.05);
+    .ell(
+        Rear,
+        0,
+        Vec3::new(-0.45, h + 0.06, 0.0),
+        Vec3::new(0.42, 0.29, 0.3),
+    )
+    .ell(
+        Rear,
+        1,
+        Vec3::new(-0.36, h + 0.3, 0.0),
+        Vec3::new(0.24, 0.05, 0.08),
+    )
+    .ell_pair(
+        Rear,
+        2,
+        Vec3::new(-0.62, h + 0.26, 0.08),
+        Vec3::new(0.1, 0.04, 0.06),
+        rot(0.0, 0.5, 0.0),
+    )
+    .ell_pair(
+        Rear,
+        2,
+        Vec3::new(-0.74, h + 0.2, 0.06),
+        Vec3::new(0.07, 0.035, 0.05),
+        rot(0.0, 0.5, 0.0),
+    )
+    .cone(
+        Rear,
+        1,
+        Vec3::new(-0.84, h + 0.04, 0.0),
+        Vec3::new(-0.94, h + 0.0, 0.0),
+        0.05,
+    );
     b.chain_pair(
         Head,
         ChainKind::Palp,
@@ -772,12 +892,12 @@ fn aranha_lobo() -> BodyPlan {
         Vec3::new(0.3, h + 0.04, 0.0),
         Vec3::new(-0.1, h + 0.04, 0.0),
         vec![
-            paint([0.3, 0.2, 0.12], 0.8, 0.0),   // 0 marrom
-            paint([0.12, 0.08, 0.05], 0.8, 0.0), // 1 marrom escuro
-            paint([0.6, 0.48, 0.32], 0.85, 0.0), // 2 faixa clara
+            paint([0.3, 0.2, 0.12], 0.8, 0.0),     // 0 marrom
+            paint([0.12, 0.08, 0.05], 0.8, 0.0),   // 1 marrom escuro
+            paint([0.6, 0.48, 0.32], 0.85, 0.0),   // 2 faixa clara
             paint([0.01, 0.01, 0.012], 0.05, 0.5), // 3 olhos pretos brilhantes
-            paint([0.34, 0.24, 0.15], 0.75, 0.0), // 4 perna clara
-            paint([0.15, 0.1, 0.06], 0.75, 0.0), // 5 perna escura (anelada)
+            paint([0.34, 0.24, 0.15], 0.75, 0.0),  // 4 perna clara
+            paint([0.15, 0.1, 0.06], 0.75, 0.0),   // 5 perna escura (anelada)
         ],
         Motion {
             lift: 0.38,
@@ -840,7 +960,13 @@ fn formiga() -> BodyPlan {
         Vec3::new(0.18, 0.15, 0.17),
         rot(-0.2, 0.0, 0.0),
     )
-    .ell_pair(Head, 3, Vec3::new(0.67, h + 0.11, 0.14), Vec3::new(0.05, 0.045, 0.035), Quat::IDENTITY)
+    .ell_pair(
+        Head,
+        3,
+        Vec3::new(0.67, h + 0.11, 0.14),
+        Vec3::new(0.05, 0.045, 0.035),
+        Quat::IDENTITY,
+    )
     .cone_pair(
         Head,
         4,
@@ -849,11 +975,31 @@ fn formiga() -> BodyPlan {
         0.035,
     )
     // mesossoma em tres gomos
-    .ell(Body, 0, Vec3::new(0.38, h + 0.05, 0.0), Vec3::new(0.13, 0.11, 0.11))
-    .ell(Body, 0, Vec3::new(0.22, h + 0.03, 0.0), Vec3::new(0.12, 0.09, 0.09))
-    .ell(Body, 0, Vec3::new(0.08, h + 0.05, 0.0), Vec3::new(0.09, 0.09, 0.08))
+    .ell(
+        Body,
+        0,
+        Vec3::new(0.38, h + 0.05, 0.0),
+        Vec3::new(0.13, 0.11, 0.11),
+    )
+    .ell(
+        Body,
+        0,
+        Vec3::new(0.22, h + 0.03, 0.0),
+        Vec3::new(0.12, 0.09, 0.09),
+    )
+    .ell(
+        Body,
+        0,
+        Vec3::new(0.08, h + 0.05, 0.0),
+        Vec3::new(0.09, 0.09, 0.08),
+    )
     // peciolo e gaster
-    .ell(Rear, 0, Vec3::new(-0.05, h + 0.07, 0.0), Vec3::new(0.045, 0.075, 0.045))
+    .ell(
+        Rear,
+        0,
+        Vec3::new(-0.05, h + 0.07, 0.0),
+        Vec3::new(0.045, 0.075, 0.045),
+    )
     .ell_rot(
         Rear,
         1,
@@ -914,11 +1060,11 @@ fn formiga() -> BodyPlan {
         Vec3::new(0.5, h + 0.04, 0.0),
         Vec3::new(0.0, h + 0.05, 0.0),
         vec![
-            paint([0.42, 0.11, 0.04], 0.3, 0.05),  // 0 cabeca/torax ruivo
-            paint([0.11, 0.04, 0.03], 0.22, 0.1),  // 1 gaster escuro
-            paint([0.32, 0.09, 0.04], 0.4, 0.0),   // 2 pernas/antenas
-            paint([0.01, 0.01, 0.01], 0.08, 0.4),  // 3 olhos
-            paint([0.16, 0.06, 0.03], 0.35, 0.0),  // 4 mandibulas
+            paint([0.42, 0.11, 0.04], 0.3, 0.05), // 0 cabeca/torax ruivo
+            paint([0.11, 0.04, 0.03], 0.22, 0.1), // 1 gaster escuro
+            paint([0.32, 0.09, 0.04], 0.4, 0.0),  // 2 pernas/antenas
+            paint([0.01, 0.01, 0.01], 0.08, 0.4), // 3 olhos
+            paint([0.16, 0.06, 0.03], 0.35, 0.0), // 4 mandibulas
         ],
         Motion {
             lift: 0.16,
@@ -939,40 +1085,62 @@ fn barata() -> BodyPlan {
     let h = 0.26;
     let mut b = Builder::new();
     // abdomen por baixo das asas
-    b.ell(Body, 3, Vec3::new(-0.22, h - 0.02, 0.0), Vec3::new(0.62, 0.09, 0.3))
-        // tegminas (asas) brilhantes, levemente sobrepostas
-        .ell_pair(
-            Body,
-            0,
-            Vec3::new(-0.3, h + 0.07, 0.1),
-            Vec3::new(0.72, 0.06, 0.2),
-            rot(-0.03, 0.05, -0.08),
-        )
-        // pronoto: escudo claro com o centro escuro
-        .ell(Body, 1, Vec3::new(0.42, h + 0.07, 0.0), Vec3::new(0.29, 0.06, 0.32))
-        .ell(Body, 2, Vec3::new(0.42, h + 0.1, 0.0), Vec3::new(0.18, 0.045, 0.19))
-        // cabeca sob o pronoto, olhos
-        .ell_rot(
-            Head,
-            2,
-            Vec3::new(0.7, h - 0.01, 0.0),
-            Vec3::new(0.12, 0.1, 0.14),
-            rot(-0.4, 0.0, 0.0),
-        )
-        .ell_pair(Head, 5, Vec3::new(0.72, h + 0.03, 0.11), Vec3::new(0.04, 0.05, 0.03), Quat::IDENTITY)
-        // ponta do abdomen
-        .ell(Rear, 3, Vec3::new(-0.8, h - 0.01, 0.0), Vec3::new(0.12, 0.06, 0.14));
+    b.ell(
+        Body,
+        3,
+        Vec3::new(-0.22, h - 0.02, 0.0),
+        Vec3::new(0.62, 0.09, 0.3),
+    )
+    // tegminas (asas) brilhantes, levemente sobrepostas
+    .ell_pair(
+        Body,
+        0,
+        Vec3::new(-0.3, h + 0.07, 0.1),
+        Vec3::new(0.72, 0.06, 0.2),
+        rot(-0.03, 0.05, -0.08),
+    )
+    // pronoto: escudo claro com o centro escuro
+    .ell(
+        Body,
+        1,
+        Vec3::new(0.42, h + 0.07, 0.0),
+        Vec3::new(0.29, 0.06, 0.32),
+    )
+    .ell(
+        Body,
+        2,
+        Vec3::new(0.42, h + 0.1, 0.0),
+        Vec3::new(0.18, 0.045, 0.19),
+    )
+    // cabeca sob o pronoto, olhos
+    .ell_rot(
+        Head,
+        2,
+        Vec3::new(0.7, h - 0.01, 0.0),
+        Vec3::new(0.12, 0.1, 0.14),
+        rot(-0.4, 0.0, 0.0),
+    )
+    .ell_pair(
+        Head,
+        5,
+        Vec3::new(0.72, h + 0.03, 0.11),
+        Vec3::new(0.04, 0.05, 0.03),
+        Quat::IDENTITY,
+    )
+    // ponta do abdomen
+    .ell(
+        Rear,
+        3,
+        Vec3::new(-0.8, h - 0.01, 0.0),
+        Vec3::new(0.12, 0.06, 0.14),
+    );
     // antenas longas que curvam para tras e para fora
     b.chain_pair(
         Head,
         ChainKind::Antenna,
         4,
         Vec3::new(0.8, h + 0.02, 0.06),
-        curve(
-            Vec3::new(1.0, 0.18, 0.3),
-            Quat::from_rotation_y(-0.09),
-            12,
-        ),
+        curve(Vec3::new(1.0, 0.18, 0.3), Quat::from_rotation_y(-0.09), 12),
         vec![0.13; 12],
         (0.02, 0.008),
     );
@@ -1007,7 +1175,11 @@ fn barata() -> BodyPlan {
             Vec3::new(-0.2, 0.7, 1.0),
         ],
         [(0.1, 0.05); 3],
-        [[0.045, 0.03, 0.018], [0.05, 0.032, 0.018], [0.055, 0.035, 0.02]],
+        [
+            [0.045, 0.03, 0.018],
+            [0.05, 0.032, 0.018],
+            [0.055, 0.035, 0.02],
+        ],
         [[4, 4, 4]; 3],
     );
     b.finish(
@@ -1049,12 +1221,39 @@ fn gafanhoto() -> BodyPlan {
         Vec3::new(0.16, 0.21, 0.16),
         rot(-0.35, 0.0, 0.0),
     )
-    .ell_pair(Head, 3, Vec3::new(0.83, h + 0.2, 0.12), Vec3::new(0.075, 0.095, 0.055), Quat::IDENTITY)
-    .ell(Head, 4, Vec3::new(0.87, h - 0.07, 0.0), Vec3::new(0.06, 0.05, 0.07))
+    .ell_pair(
+        Head,
+        3,
+        Vec3::new(0.83, h + 0.2, 0.12),
+        Vec3::new(0.075, 0.095, 0.055),
+        Quat::IDENTITY,
+    )
+    .ell(
+        Head,
+        4,
+        Vec3::new(0.87, h - 0.07, 0.0),
+        Vec3::new(0.06, 0.05, 0.07),
+    )
     // pronoto em sela com listras laterais
-    .ell(Body, 0, Vec3::new(0.5, h + 0.12, 0.0), Vec3::new(0.22, 0.19, 0.18))
-    .ell_pair(Body, 4, Vec3::new(0.5, h + 0.13, 0.16), Vec3::new(0.18, 0.035, 0.03), Quat::IDENTITY)
-    .ell(Body, 0, Vec3::new(0.26, h + 0.05, 0.0), Vec3::new(0.2, 0.16, 0.15))
+    .ell(
+        Body,
+        0,
+        Vec3::new(0.5, h + 0.12, 0.0),
+        Vec3::new(0.22, 0.19, 0.18),
+    )
+    .ell_pair(
+        Body,
+        4,
+        Vec3::new(0.5, h + 0.13, 0.16),
+        Vec3::new(0.18, 0.035, 0.03),
+        Quat::IDENTITY,
+    )
+    .ell(
+        Body,
+        0,
+        Vec3::new(0.26, h + 0.05, 0.0),
+        Vec3::new(0.2, 0.16, 0.15),
+    )
     // abdomen comprido
     .ell_rot(
         Rear,
@@ -1076,11 +1275,7 @@ fn gafanhoto() -> BodyPlan {
         ChainKind::Antenna,
         0,
         Vec3::new(0.88, h + 0.27, 0.05),
-        curve(
-            Vec3::new(1.0, 0.55, 0.35),
-            Quat::from_rotation_z(-0.06),
-            7,
-        ),
+        curve(Vec3::new(1.0, 0.55, 0.35), Quat::from_rotation_z(-0.06), 7),
         vec![0.09; 7],
         (0.02, 0.012),
     );
@@ -1160,40 +1355,81 @@ fn rato() -> BodyPlan {
     let h = 0.42;
     let mut b = Builder::new();
     // tronco: peito, corpo, quadris, barriga clara
-    b.ell(Body, 0, Vec3::new(-0.1, h + 0.07, 0.0), Vec3::new(0.55, 0.3, 0.3))
-        .ell(Body, 0, Vec3::new(-0.42, h + 0.06, 0.0), Vec3::new(0.36, 0.32, 0.33))
-        .ell(Body, 0, Vec3::new(0.28, h + 0.03, 0.0), Vec3::new(0.3, 0.25, 0.25))
-        .ell(Body, 1, Vec3::new(-0.05, h - 0.1, 0.0), Vec3::new(0.5, 0.17, 0.23))
-        // cabeca: cranio, focinho, nariz, olhos, orelhas
-        .ell(Head, 0, Vec3::new(0.66, h + 0.09, 0.0), Vec3::new(0.24, 0.19, 0.2))
-        .ell_rot(
-            Head,
-            0,
-            Vec3::new(0.88, h + 0.03, 0.0),
-            Vec3::new(0.17, 0.12, 0.12),
-            rot(-0.15, 0.0, 0.0),
-        )
-        .ell(Head, 2, Vec3::new(1.04, h + 0.02, 0.0), Vec3::splat(0.045))
-        .ell_pair(Head, 3, Vec3::new(0.78, h + 0.17, 0.12), Vec3::splat(0.045), Quat::IDENTITY)
-        .ell_pair(
-            Head,
-            2,
-            Vec3::new(0.6, h + 0.28, 0.15),
-            Vec3::new(0.05, 0.13, 0.12),
-            rot(0.0, 0.3, 0.45),
-        )
-        .ell_pair(
-            Head,
-            5,
-            Vec3::new(0.63, h + 0.28, 0.155),
-            Vec3::new(0.03, 0.1, 0.09),
-            rot(0.0, 0.3, 0.45),
-        );
+    b.ell(
+        Body,
+        0,
+        Vec3::new(-0.1, h + 0.07, 0.0),
+        Vec3::new(0.55, 0.3, 0.3),
+    )
+    .ell(
+        Body,
+        0,
+        Vec3::new(-0.42, h + 0.06, 0.0),
+        Vec3::new(0.36, 0.32, 0.33),
+    )
+    .ell(
+        Body,
+        0,
+        Vec3::new(0.28, h + 0.03, 0.0),
+        Vec3::new(0.3, 0.25, 0.25),
+    )
+    .ell(
+        Body,
+        1,
+        Vec3::new(-0.05, h - 0.1, 0.0),
+        Vec3::new(0.5, 0.17, 0.23),
+    )
+    // cabeca: cranio, focinho, nariz, olhos, orelhas
+    .ell(
+        Head,
+        0,
+        Vec3::new(0.66, h + 0.09, 0.0),
+        Vec3::new(0.24, 0.19, 0.2),
+    )
+    .ell_rot(
+        Head,
+        0,
+        Vec3::new(0.88, h + 0.03, 0.0),
+        Vec3::new(0.17, 0.12, 0.12),
+        rot(-0.15, 0.0, 0.0),
+    )
+    .ell(Head, 2, Vec3::new(1.04, h + 0.02, 0.0), Vec3::splat(0.045))
+    .ell_pair(
+        Head,
+        3,
+        Vec3::new(0.78, h + 0.17, 0.12),
+        Vec3::splat(0.045),
+        Quat::IDENTITY,
+    )
+    .ell_pair(
+        Head,
+        2,
+        Vec3::new(0.6, h + 0.28, 0.15),
+        Vec3::new(0.05, 0.13, 0.12),
+        rot(0.0, 0.3, 0.45),
+    )
+    .ell_pair(
+        Head,
+        5,
+        Vec3::new(0.63, h + 0.28, 0.155),
+        Vec3::new(0.03, 0.1, 0.09),
+        rot(0.0, 0.3, 0.45),
+    );
     // bigodes (3 por lado)
     for (i, dy) in [0.12f32, 0.0, -0.12].into_iter().enumerate() {
         let base = Vec3::new(0.98, h + 0.03, 0.07);
         let d = Vec3::new(0.45, dy, 1.0);
-        b.chain(Head, ChainKind::Whisker, 4, base, vec![d, d], vec![0.16, 0.16], (0.012, 0.006), false, i as f32);
+        b.chain(
+            Head,
+            ChainKind::Whisker,
+            4,
+            base,
+            vec![d, d],
+            vec![0.16, 0.16],
+            (0.012, 0.006),
+            false,
+            i as f32,
+        );
         b.chain(
             Head,
             ChainKind::Whisker,
@@ -1229,8 +1465,8 @@ fn rato() -> BodyPlan {
         foot: front_foot,
         phase: (0.25, 0.75),
         phase_run: (0.5, 0.6),
-        l1: 0.22,
-        l2: 0.22,
+        l1: 0.26,
+        l2: 0.26,
         pole: Vec3::new(-1.0, 0.0, 0.15),
         tarsus: Vec3::new(-0.07, 0.05, 0.0),
         widths: [0.075, 0.05, 0.035],
@@ -1357,7 +1593,11 @@ mod tests {
             }
             // pernas vem em pares (lado +, lado -), da frente para tras
             for pair in p.legs.chunks(2) {
-                assert_ne!(pair[0].phase_offset, pair[1].phase_offset, "{:?}", p.species);
+                assert_ne!(
+                    pair[0].phase_offset, pair[1].phase_offset,
+                    "{:?}",
+                    p.species
+                );
             }
             let left: Vec<_> = p.legs.iter().filter(|l| l.side > 0.0).collect();
             for w in left.windows(2) {
@@ -1388,7 +1628,7 @@ mod tests {
         assert_eq!(walk, vec![0.0, 0.25, 0.5, 0.75], "4 tempos distintos");
         // correndo: patas do mesmo par quase juntas
         for pair in p.legs.chunks(2) {
-            assert!((pair[0].phase_run - pair[1].phase_run).abs() <= 0.1);
+            assert!((pair[0].phase_run - pair[1].phase_run).abs() <= 0.1 + 1e-4);
         }
         // cotovelo para tras, joelho para a frente
         assert!(p.legs[0].pole.x < 0.0 && p.legs[2].pole.x > 0.0);
@@ -1420,14 +1660,22 @@ mod tests {
             let spots: Vec<Vec3> = p.profile.hit_spots().collect();
             assert!(!spots.is_empty());
             for h in &spots {
-                assert!(h.x >= lo && h.x <= hi, "{:?}: centro {h} fora do corpo", p.species);
+                assert!(
+                    h.x >= lo && h.x <= hi,
+                    "{:?}: centro {h} fora do corpo",
+                    p.species
+                );
                 assert!(h.z <= (hi - lo), "{:?}: raio exagerado", p.species);
             }
             // a cobertura vai de ponta a ponta do corpo (com folga de 25%)
             let cov_lo = spots.iter().map(|h| h.x - h.z).fold(f32::MAX, f32::min);
             let cov_hi = spots.iter().map(|h| h.x + h.z).fold(f32::MIN, f32::max);
             let slack = 0.25 * (hi - lo);
-            assert!(cov_lo <= lo + slack && cov_hi >= hi - slack, "{:?}", p.species);
+            assert!(
+                cov_lo <= lo + slack && cov_hi >= hi - slack,
+                "{:?}",
+                p.species
+            );
             let (c, r) = p.profile.bounds();
             for h in &spots {
                 assert!((h.x - c.x).abs() + h.z <= r + 1e-4);

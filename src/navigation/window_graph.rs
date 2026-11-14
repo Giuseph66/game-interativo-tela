@@ -69,6 +69,9 @@ pub struct BuildParams {
     pub min_segment: f32,
     pub min_window_size: f32,
     pub screen_edges: bool,
+    /// Fios de seda verticais dos cantos de baixo de cada janela ate a superficie logo abaixo:
+    /// ligam janelas "soltas" no meio da tela ao resto do grafo (pontes).
+    pub silk_threads: bool,
 }
 
 impl Default for BuildParams {
@@ -78,6 +81,7 @@ impl Default for BuildParams {
             min_segment: 24.0,
             min_window_size: 120.0,
             screen_edges: true,
+            silk_threads: false,
         }
     }
 }
@@ -88,6 +92,8 @@ pub struct PathGraph {
     pub edges: Vec<Edge>,
     adjacency: Vec<Vec<EdgeId>>,
     pub screen: Option<Rect>,
+    /// Fios de seda (pontes) incluidos como caminho; quem desenha a cena mostra cada um.
+    pub threads: Vec<Segment>,
 }
 
 struct Surface {
@@ -157,9 +163,18 @@ impl PathGraph {
 
     /// Primeira superficie "chao" (normal para cima) abaixo de `p`: usada na queda livre.
     pub fn surface_below(&self, p: Vec2) -> Option<GraphPoint> {
+        self.surface_below_except(p, None)
+    }
+
+    /// Como [`surface_below`](Self::surface_below), mas atravessa as superficies de `skip`
+    /// (mob arremessado de uma janela sacudida nao pousa de volta nela).
+    pub fn surface_below_except(&self, p: Vec2, skip: Option<SurfaceOwner>) -> Option<GraphPoint> {
         let mut best: Option<(f32, GraphPoint)> = None;
         for id in 0..self.edges.len() as EdgeId {
             let e = self.edge(id);
+            if skip == Some(e.owner) {
+                continue;
+            }
             if e.normal.y >= -0.5 || e.is_vertical() {
                 continue; // so superficies voltadas para cima
             }
@@ -207,15 +222,35 @@ impl PathGraph {
     /// Constroi o grafo. `windows` deve estar ordenada da frente para o fundo (ordem Z).
     pub fn build(screen: Rect, windows: &[DesktopWindow], params: &BuildParams) -> PathGraph {
         let mut surfaces: Vec<Surface> = Vec::new();
+        // barras do sistema: nada pode ficar "olhando" para dentro delas
+        let panel_rects: Vec<Rect> = windows
+            .iter()
+            .filter(|w| w.is_panel())
+            .map(|w| w.rect)
+            .collect();
 
         if params.screen_edges {
+            // (sem os trechos atras das barras do sistema)
+            let panels: Vec<Rect> = windows
+                .iter()
+                .filter(|w| w.is_panel())
+                // (a barra encosta na borda da tela: cresce 1 px para cobri-la de verdade)
+                .map(|w| w.rect.inflate(1.0))
+                .collect();
             for side in Side::ALL {
-                surfaces.push(Surface {
-                    seg: screen.edge(side),
-                    owner: SurfaceOwner::Screen,
-                    side,
-                    normal: -side.outward_normal(),
-                });
+                let segs = if panels.is_empty() {
+                    vec![screen.edge(side)]
+                } else {
+                    visible_edge_segments(&screen, side, &panels, &screen, params.min_segment)
+                };
+                for seg in segs {
+                    surfaces.push(Surface {
+                        seg,
+                        owner: SurfaceOwner::Screen,
+                        side,
+                        normal: -side.outward_normal(),
+                    });
+                }
             }
         }
 
@@ -223,9 +258,13 @@ impl PathGraph {
         let eligible: Vec<&DesktopWindow> = windows
             .iter()
             .filter(|w| {
-                w.rect.width() >= params.min_window_size
-                    && w.rect.height() >= params.min_window_size
-                    && w.rect.intersects(&screen)
+                // icones e barras podem ser pequenos; janelas de apps tem tamanho minimo
+                let min = if w.is_element() {
+                    MIN_ELEMENT_SIZE
+                } else {
+                    params.min_window_size
+                };
+                w.rect.width() >= min && w.rect.height() >= min && w.rect.intersects(&screen)
             })
             .collect();
 
@@ -237,8 +276,9 @@ impl PathGraph {
                     visible_edge_segments(&w.rect, side, &occluders, &screen, params.min_segment)
                 {
                     // lado voltado para fora da tela nao e caminhavel (a tela assume)
+                    // (e lado colado numa barra, olhando para ela: o bicho ficaria por cima dela)
                     let probe = seg.point_at(0.5) + normal * 3.0;
-                    if !screen.contains(probe) {
+                    if !screen.contains(probe) || panel_rects.iter().any(|p| p.contains(probe)) {
                         continue;
                     }
                     surfaces.push(Surface {
@@ -251,7 +291,23 @@ impl PathGraph {
             }
         }
 
-        Self::from_surfaces(screen, &surfaces, params.link_distance)
+        let threads = if params.silk_threads {
+            silk_threads(&surfaces, &eligible, &screen, params)
+        } else {
+            Vec::new()
+        };
+        for seg in &threads {
+            surfaces.push(Surface {
+                seg: *seg,
+                // da tela, nao da janela: fio nao e lugar de ninho nem "cai" com a sacudida
+                owner: SurfaceOwner::Screen,
+                side: Side::Right,
+                normal: Vec2::X,
+            });
+        }
+        let mut g = Self::from_surfaces(screen, &surfaces, params.link_distance);
+        g.threads = threads;
+        g
     }
 
     fn from_surfaces(screen: Rect, surfaces: &[Surface], link_distance: f32) -> PathGraph {
@@ -380,6 +436,107 @@ impl PathGraph {
             cost,
         });
     }
+}
+
+/// Distancia do fio ao canto da janela (px).
+const THREAD_INSET: f32 = 26.0;
+/// Menor lado (px) de um elemento do desktop (icone, barra) para virar superficie.
+const MIN_ELEMENT_SIZE: f32 = 16.0;
+/// Mais estreito que isso (px), o elemento ganha um fio so, no meio, para o apoio mais proximo.
+const SMALL_ELEMENT_WIDTH: f32 = 160.0;
+
+/// Fios de seda verticais que ligam o que esta "solto" no meio da tela ao resto do grafo:
+///
+/// * janela: dois fios, dos cantos de baixo ate o primeiro "chao" abaixo (topo visivel de outra
+///   janela/elemento ou a base da tela);
+/// * elemento pequeno (icone): um fio so, do meio, para baixo ou para cima (pendurado), o que
+///   for mais curto.
+///
+/// Quem ja encosta numa borda da tela nao precisa de fio.
+fn silk_threads(
+    surfaces: &[Surface],
+    windows: &[&DesktopWindow],
+    screen: &Rect,
+    params: &BuildParams,
+) -> Vec<Segment> {
+    let d = params.link_distance;
+    let spans = |s: &Surface, x: f32| {
+        let (lo, hi) = (s.seg.a.x.min(s.seg.b.x), s.seg.a.x.max(s.seg.b.x));
+        s.side.is_horizontal() && x >= lo && x <= hi
+    };
+    // o fio sai de um trecho visivel da borda do proprio dono
+    let own_edge = |owner: SurfaceOwner, side: Side, x: f32, y: f32| {
+        surfaces.iter().any(|s| {
+            s.owner == owner && s.side == side && spans(s, x) && (s.seg.a.y - y).abs() < 1.0
+        })
+    };
+    let floor_below = |owner: SurfaceOwner, x: f32, y0: f32| {
+        surfaces
+            .iter()
+            .filter(|s| {
+                s.owner != owner
+                    && spans(s, x)
+                    && match s.owner {
+                        SurfaceOwner::Window(_) => s.side == Side::Top,
+                        SurfaceOwner::Screen => s.side == Side::Bottom,
+                    }
+                    && s.seg.a.y > y0 + d
+            })
+            .map(|s| s.seg.a.y)
+            .min_by(|a, b| a.total_cmp(b))
+    };
+    let ceiling_above = |owner: SurfaceOwner, x: f32, y0: f32| {
+        surfaces
+            .iter()
+            .filter(|s| {
+                s.owner != owner
+                    && spans(s, x)
+                    && match s.owner {
+                        SurfaceOwner::Window(_) => s.side == Side::Bottom,
+                        SurfaceOwner::Screen => s.side == Side::Top,
+                    }
+                    && s.seg.a.y < y0 - d
+            })
+            .map(|s| s.seg.a.y)
+            .max_by(|a, b| a.total_cmp(b))
+    };
+    let mut out = Vec::new();
+    for w in windows {
+        let owner = SurfaceOwner::Window(w.id);
+        let r = &w.rect;
+        let touches_screen = r.min.x <= screen.min.x + d
+            || r.max.x >= screen.max.x - d
+            || r.min.y <= screen.min.y + d
+            || r.max.y >= screen.max.y - d;
+        if touches_screen {
+            continue;
+        }
+        if r.width() < SMALL_ELEMENT_WIDTH {
+            let x = r.center().x;
+            let down = own_edge(owner, Side::Bottom, x, r.max.y)
+                .then(|| floor_below(owner, x, r.max.y))
+                .flatten()
+                .map(|y| Segment::new(Vec2::new(x, r.max.y), Vec2::new(x, y)));
+            let up = own_edge(owner, Side::Top, x, r.min.y)
+                .then(|| ceiling_above(owner, x, r.min.y))
+                .flatten()
+                .map(|y| Segment::new(Vec2::new(x, y), Vec2::new(x, r.min.y)));
+            let shortest = match (down, up) {
+                (Some(a), Some(b)) => Some(if a.length() <= b.length() { a } else { b }),
+                (a, b) => a.or(b),
+            };
+            out.extend(shortest);
+        } else {
+            for x in [r.min.x + THREAD_INSET, r.max.x - THREAD_INSET] {
+                if own_edge(owner, Side::Bottom, x, r.max.y)
+                    && let Some(y1) = floor_below(owner, x, r.max.y)
+                {
+                    out.push(Segment::new(Vec2::new(x, r.max.y), Vec2::new(x, y1)));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Mapeia um ponto que estava preso a `old` para a posicao equivalente em `new`

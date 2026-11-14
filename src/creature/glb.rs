@@ -27,6 +27,7 @@ use bevy::world_serialization::WorldInstanceReady;
 
 use super::animation::{Clip, clip_for_state, resolve_clip, select_clips};
 use super::procedural::{ProceduralAssets, spawn_procedural};
+use super::species::Species;
 use super::spider::Mob;
 use crate::config::Config;
 use crate::mobs::{MobCatalog, MobSource};
@@ -127,12 +128,12 @@ pub fn spawn_pending_models(
 ) {
     for (entity, mob) in &pending {
         let Some(kind) = catalog.kinds.get_mut(mob.kind) else {
-            spawn_procedural(&mut commands, entity, &procedural);
+            spawn_procedural(&mut commands, entity, &procedural, Species::Viuva);
             commands.entity(entity).remove::<PendingModel>();
             continue;
         };
         let use_procedural = match (&kind.source, &kind.handle) {
-            (MobSource::Procedural, _) => true,
+            (MobSource::Procedural(_), _) => true,
             _ if kind.failed => true,
             (MobSource::Glb(_), None) => true,
             (MobSource::Glb(_), Some(handle)) => match asset_server.load_state(handle) {
@@ -166,7 +167,11 @@ pub fn spawn_pending_models(
 
         commands.entity(entity).remove::<PendingModel>();
         if use_procedural {
-            spawn_procedural(&mut commands, entity, &procedural);
+            let species = match kind.source {
+                MobSource::Procedural(s) => s,
+                MobSource::Glb(_) => Species::Viuva,
+            };
+            spawn_procedural(&mut commands, entity, &procedural, species);
             continue;
         }
         let Some(data) = &kind.glb else { continue };

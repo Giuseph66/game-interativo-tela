@@ -21,11 +21,11 @@ use crate::creature::spider::{
 };
 use crate::desktop::{Desktop, poll_desktop};
 use crate::diagnostics::{Metrics, log_metrics};
-use crate::game::Score;
+use crate::game::{NestField, Score};
 use crate::mobs::{MobCatalog, MobCommand, apply_mob_commands, discover_kinds, spawn_initial_mobs};
 use crate::navigation::geometry::Rect;
 use crate::overlay::{OverlayGeometry, OverlayPlugin, OverlaySet, RunOptions, window};
-use crate::{assets, panel, platform, poc};
+use crate::{assets, nests, panel, platform, poc};
 
 /// Argumentos de linha de comando.
 #[derive(Debug, Default, PartialEq)]
@@ -43,6 +43,9 @@ pub struct Cli {
     pub list_mobs: bool,
     pub print_config: bool,
     pub help: bool,
+    /// `--ledges entrada.png saida.png`: desenha os apoios que o heroi enxergaria na imagem.
+    pub ledges: Option<(PathBuf, PathBuf)>,
+    pub hero_demo: Option<String>,
 }
 
 pub const HELP: &str = "\
@@ -58,6 +61,9 @@ OPCOES:
     --spawn <a,b,...>    spawna mobs ao iniciar pelo nome (veja --list-mobs), ex.: rat,ant,rat
     --list-mobs          lista os tipos de mob disponiveis e sai
     --list-windows       imprime as janelas detectadas (bordas visiveis) e sai
+    --hero-demo <seq>    teste: teclas programadas para o heroi, ex.: right:2,jump+right:0.5,attack
+                         (teclas: left right up down jump run attack wait; `+` junta, `:` segundos)
+    --ledges <in> <out>  depuracao: marca numa imagem PNG os apoios que o heroi enxerga e sai
     --timeout <segs>     encerra sozinho apos N segundos (testes)
     --screenshot <png>   salva um quadro renderizado (RGBA) com estatisticas de alfa e sai
     --auto-kill <segs>   teste: simula um clique na aranha apos N s (e a cada reaparecimento)
@@ -129,6 +135,19 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
                 );
             }
             "--list-windows" => cli.list_windows = true,
+            "--hero-demo" => {
+                let script = it
+                    .next()
+                    .ok_or("--hero-demo exige uma sequencia, ex.: right:2,jump+right:0.5,attack")?;
+                crate::hero::Script::parse(&script)?;
+                cli.hero_demo = Some(script);
+            }
+            "--ledges" => {
+                let msg = "--ledges exige dois caminhos: entrada.png saida.png";
+                let input = PathBuf::from(it.next().ok_or(msg)?);
+                let output = PathBuf::from(it.next().ok_or(msg)?);
+                cli.ledges = Some((input, output));
+            }
             "--print-config" => cli.print_config = true,
             "-h" | "--help" => cli.help = true,
             other => return Err(format!("argumento desconhecido: {other}")),
@@ -186,6 +205,18 @@ pub fn run(cli: Cli) -> ExitCode {
         list_windows();
         return ExitCode::SUCCESS;
     }
+    if let Some((input, output)) = &cli.ledges {
+        return match draw_ledges_file(input, output) {
+            Ok(n) => {
+                println!("{n} apoios; imagem marcada em {}", output.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("erro: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if cli.list_mobs {
         let root = assets::asset_root(&cfg.spider.model);
         let presets =
@@ -194,7 +225,9 @@ pub fn run(cli: Cli) -> ExitCode {
         println!("tipos de mob (use o nome em --spawn):");
         for (i, k) in kinds.iter().enumerate() {
             let src = match &k.source {
-                crate::mobs::MobSource::Procedural => "procedural".to_string(),
+                crate::mobs::MobSource::Procedural(sp) => {
+                    format!("procedural: {}", sp.aliases().join(", "))
+                }
                 crate::mobs::MobSource::Glb(p) => p.clone(),
             };
             let mark = if i == default { "  (padrao)" } else { "" };
@@ -212,8 +245,10 @@ pub fn run(cli: Cli) -> ExitCode {
         panel_selftest: cli.panel_selftest,
         auto_hit_secs: cli.auto_hit_secs,
         spawn: cli.spawn,
+        hero_demo: cli.hero_demo,
     };
     let exit = build_app(cfg, opts).run();
+    platform::shutdown();
     match exit {
         AppExit::Success => ExitCode::SUCCESS,
         AppExit::Error(code) => ExitCode::from(code.get()),
@@ -221,9 +256,39 @@ pub fn run(cli: Cli) -> ExitCode {
 }
 
 /// `--list-windows`: diagnostico sem janela/GPU (util para validar a enumeracao no Windows).
+/// Le um PNG, encontra os apoios (o que o heroi enxerga dentro de um aplicativo) e salva a imagem
+/// com eles marcados: verde = borda continua, laranja = topo de texto.
+fn draw_ledges_file(input: &std::path::Path, output: &std::path::Path) -> Result<usize, String> {
+    use crate::navigation::vision;
+    let img = image::open(input).map_err(|e| e.to_string())?.to_rgba8();
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let mut rgba = img.into_raw();
+    let luma = vision::luma_from_rgba(&rgba);
+    let t0 = std::time::Instant::now();
+    let ledges = vision::find_ledges(&luma, w, h, &vision::VisionParams::default());
+    println!(
+        "{w}x{h}: analise em {:.1} ms",
+        t0.elapsed().as_secs_f32() * 1000.0
+    );
+    vision::draw_ledges(&mut rgba, w, h, &ledges);
+    image::save_buffer(output, &rgba, w as u32, h as u32, image::ColorType::Rgba8)
+        .map_err(|e| e.to_string())?;
+    Ok(ledges.len())
+}
+
 fn list_windows() {
     let screen = Rect::from_xywh(0.0, 0.0, 1920.0, 1080.0);
     let windows = platform::list_windows(screen, platform::current_pid());
+    println!("fonte: {}", platform::window_source());
+    for (i, w) in platform::work_areas(screen).iter().enumerate() {
+        println!(
+            "area util {i}: ({:.0},{:.0} {:.0}x{:.0})",
+            w.min.x,
+            w.min.y,
+            w.width(),
+            w.height()
+        );
+    }
     println!("{} janelas (da frente para o fundo):", windows.len());
     for w in &windows {
         println!(
@@ -282,6 +347,8 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
     );
 
     let seed = cfg.behavior.seed;
+    let heist = crate::web::HeistState::new(seed, &cfg);
+    let hero = crate::hero::HeroState::new(seed, &cfg, &opts);
     let presets_dir =
         assets::find_default_config().and_then(|p| p.parent().map(|d| d.join("models")));
     let (kinds, default_kind) = discover_kinds(
@@ -318,6 +385,13 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
         .add_plugins(OverlayPlugin)
         .add_message::<MobCommand>()
         .add_message::<crate::hud::HitFx>()
+        .add_message::<crate::hud::FloatText>()
+        .insert_resource(NestField::new(seed))
+        .insert_resource(heist)
+        .init_resource::<crate::web::HeistHud>()
+        .init_resource::<panel::PanelNotice>()
+        .insert_resource(hero)
+        .init_resource::<crate::hero::HeroHud>()
         .init_resource::<crate::game::Progress>()
         .add_systems(
             Startup,
@@ -363,6 +437,51 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
                 crate::hud::update_sword_cursor,
             )
                 .chain()
+                .in_set(OverlaySet::Game),
+        )
+        // ninhos e sacudida: os golpes em ninho sao decididos antes dos golpes em mob; o resto
+        // roda depois da simulacao dos mobs e antes da animacao dos textos da interface
+        .add_systems(
+            Startup,
+            (
+                nests::setup_nests,
+                crate::web::setup_web,
+                crate::hero::setup_hero,
+            ),
+        )
+        .add_systems(
+            Update,
+            (nests::apply_hatchlings, nests::nest_clicks)
+                .chain()
+                .after(spawn_pending_models)
+                .before(read_click)
+                .in_set(OverlaySet::Game),
+        )
+        .add_systems(
+            Update,
+            (
+                nests::nest_update,
+                nests::sync_nest_visuals,
+                nests::update_nest_bars,
+                // heroi: mundo, teclado, combate, itens, desenho
+                (
+                    crate::hero::hero_world,
+                    crate::hero::hero_control,
+                    crate::hero::hero_combat,
+                    crate::hero::hero_loot,
+                    crate::hero::sync_hero_visuals,
+                    crate::hero::hero_hud,
+                )
+                    .chain(),
+                // sequestro do mouse: fio, teia do canto e cursor real arrastado
+                crate::web::heist_update,
+                crate::web::sync_web_visuals,
+                crate::web::sync_bridge_threads,
+                crate::hud::spawn_float_text,
+            )
+                .chain()
+                .after(spider_think)
+                .before(crate::hud::animate_fx)
                 .in_set(OverlaySet::Game),
         )
         .add_systems(

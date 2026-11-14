@@ -8,6 +8,7 @@
 
 pub mod geometry;
 pub mod pathfinding;
+pub mod vision;
 pub mod walker;
 pub mod window_graph;
 

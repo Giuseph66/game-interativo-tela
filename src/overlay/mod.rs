@@ -58,6 +58,8 @@ pub struct RunOptions {
     pub auto_kill_secs: Option<f32>,
     /// Salva um quadro renderizado (RGBA) neste arquivo e encerra.
     pub screenshot: Option<std::path::PathBuf>,
+    /// Sequencia de teclas programada para o heroi (testes/demonstracao), ex.: "right:2,jump".
+    pub hero_demo: Option<String>,
 }
 
 /// Ordem de execucao por quadro: `Input` (janela, cursor) -> `Game` (aranha etc.) -> `Output`
@@ -87,6 +89,7 @@ impl Plugin for OverlayPlugin {
                 Update,
                 (
                     window::fit_overlay_window,
+                    window::track_overlay_origin,
                     apply_dpi,
                     heartbeat_and_exit,
                     input::update_cursor,

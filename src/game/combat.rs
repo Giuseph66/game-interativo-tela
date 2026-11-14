@@ -121,10 +121,26 @@ impl Progress {
         })
     }
 
+    /// Perde XP (mordida de elite) sem nunca perder a espada ja conquistada: o XP nao cai abaixo
+    /// do limiar da espada atual. Devolve quanto saiu de fato.
+    pub fn lose_xp(&mut self, amount: u32, c: &CombatConfig) -> u32 {
+        let floor = self.sword.xp_required(c).min(self.xp);
+        let after = self.xp.saturating_sub(amount).max(floor);
+        let lost = self.xp - after;
+        self.xp = after;
+        lost
+    }
+
     /// Golpe com a espada atual num alvo com `hp` de vida. Aplica o dano em `hp` e o XP aqui.
     pub fn strike(&mut self, hp: &mut f32, c: &CombatConfig) -> Strike {
+        self.strike_scaled(hp, c, 1.0)
+    }
+
+    /// Como [`strike`](Self::strike), com o dano da espada multiplicado por `scale` (golpes do
+    /// heroi e pisoes sao mais fortes que um clique). O XP e o mesmo de um golpe comum.
+    pub fn strike_scaled(&mut self, hp: &mut f32, c: &CombatConfig, scale: f32) -> Strike {
         let sword = self.sword;
-        let damage = sword.damage(c);
+        let damage = sword.damage(c) * scale.max(0.0);
         *hp = (*hp - damage).max(0.0);
         let killed = *hp <= 0.0;
         let base = c.xp_per_hit + if killed { c.xp_per_kill } else { 0 };
@@ -232,6 +248,27 @@ mod tests {
         };
         let (mut ha, mut hb) = (1000.0, 1000.0);
         assert!(b.strike(&mut hb, &c).xp_gained > a.strike(&mut ha, &c).xp_gained);
+    }
+
+    #[test]
+    fn losing_xp_never_costs_the_sword() {
+        let c = cfg();
+        let mut p = Progress {
+            xp: c.xp_iron + 3,
+            sword: Sword::Iron,
+        };
+        assert_eq!(p.lose_xp(2, &c), 2);
+        assert_eq!(p.xp, c.xp_iron + 1);
+        assert_eq!(p.lose_xp(50, &c), 1, "para no limiar da espada atual");
+        assert_eq!((p.xp, p.sword), (c.xp_iron, Sword::Iron));
+        assert_eq!(p.lose_xp(50, &c), 0);
+        // madeira: o piso e zero
+        let mut w = Progress {
+            xp: 4,
+            sword: Sword::Wood,
+        };
+        assert_eq!(w.lose_xp(10, &c), 4);
+        assert_eq!(w.xp, 0);
     }
 
     #[test]

@@ -1,0 +1,6 @@
+{
+  "uuid": "spiderdesk-windows@neurelix",
+  "name": "SpiderDesk windows",
+  "description": "Publishes window rectangles and the pointer position for the SpiderDesk desktop pet while it is running. Wayland apps cannot ask where other windows are; this runs inside the Shell and writes a small text file in XDG_RUNTIME_DIR. Does nothing while SpiderDesk is closed.",
+  "shell-version": ["45", "46", "47", "48", "49"]
+}
