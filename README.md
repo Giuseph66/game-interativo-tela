@@ -11,25 +11,85 @@ janelas reais, escala as laterais, contorna cantos, foge do cursor e morre se vo
 > estão **pendentes** — veja [docs/TESTES_WINDOWS.md](docs/TESTES_WINDOWS.md) e a seção
 > [Resultados dos testes](#resultados-dos-testes).
 
-## Início rápido
+## Como rodar (forma mais eficiente)
+
+### Uso diário no Windows 10/11 (recomendado)
+
+1. Instale o Rust uma vez: <https://rustup.rs> (toolchain *stable* ≥ 1.97; o padrão MSVC serve).
+2. Na pasta do projeto, **compile em release uma única vez** (a primeira compilação do Bevy leva
+   ~10–15 min; as seguintes, segundos):
+   ```powershell
+   cargo build --release
+   ```
+3. Daí em diante **rode o executável direto**, sem passar pelo `cargo` (sem checagem de build,
+   abre na hora). Rode **a partir da pasta do projeto**, para ele achar `assets/` e `config/`:
+   ```powershell
+   .\target\release\spiderdesk.exe
+   .\target\release\spiderdesk.exe --spawn wolf_spider,rat,ant   # ja abre com esses mobs
+   ```
+   Ou gere uma pasta portátil (exe + `config/` + `assets/`) e rode de qualquer lugar:
+   `scripts/package-windows.sh` (do Linux) — no Windows basta copiar `target\release\spiderdesk.exe`
+   para junto de `config\` e `assets\`.
+4. Para iniciar com o Windows: atalho para o `.exe` em `shell:startup`, com "Executar: Minimizada"
+   (o console fica minimizado; ele mostra o log).
+
+Na primeira vez, valide a transparência com o cubo de teste: `spiderdesk.exe --poc`.
+
+**Não** use `cargo run` sem `--release` para uso diário: o build de debug é mais lento e maior.
+Use-o só enquanto mexe no código (recompila mais rápido).
+
+Para gastar menos CPU/GPU:
+
+| Ajuste | Onde |
+|---|---|
+| Menos mobs simultâneos | `[mobs] max` (padrão 30) |
+| Sem painel quando não precisa | `--no-panel` ou `[mobs] panel = false` |
+| FPS menor em movimento | `[overlay] fps_limit` (padrão 60) |
+| Sem antisserrilhado | `[overlay] msaa_samples = 1` (padrão) |
+| Log mais enxuto | `set RUST_LOG=warn` antes de rodar |
+| Modelos leves | GLBs de poucos MB carregam na hora; arquivos de 30–70 MB levam alguns segundos no **primeiro** spawn do tipo |
+
+O app já reduz o próprio ritmo: 60 FPS com algo se mexendo, 20 Hz com tudo parado e o cursor
+longe, 4 Hz quando não há nada visível.
+
+### Encerrar
+
+**Ctrl+Alt+Shift+Q** (configurável; funciona com qualquer janela em foco), o botão
+**Sair do SpiderDesk** no painel, ou `taskkill /IM spiderdesk.exe /F`.
+
+## Painel de mobs (janela flutuante)
+
+Ao iniciar abre uma janela pequena, **transparente, sem bordas e sempre no topo**, no canto
+superior direito:
+
+* **`+ <tipo>`**: spawna um mob daquele tipo num ponto aleatório das bordas de janelas/tela;
+* **Matar todos** / **Remover todos**; contador de mobs, abates e pontos;
+* arraste pelo **título**; **`_`** minimiza (volta pela barra de tarefas).
+
+Os tipos são montados automaticamente: **aranha procedural** + **cada `.glb` em
+`assets/models/`**. Para adicionar um bicho novo, coloque o `.glb` em `assets/models/`; se ele
+andar de lado/de costas, crie um preset em `config/models/<nome>.toml` com `glb_yaw_deg`
+(veja [assets/models/README.md](assets/models/README.md)). O nome do preset vira o rótulo.
 
 ```powershell
-# Windows 10/11, Rust >= 1.97
-cargo run --release -- --poc     # Etapa 1: cubo 3D transparente (valide a transparencia primeiro)
-cargo run --release              # a aranha
+spiderdesk.exe --list-mobs                      # tipos disponiveis
+spiderdesk.exe --spawn rat,rat,wolf_spider      # spawna ao iniciar (nome, arquivo ou indice)
 ```
 
-Encerramento de emergência (independe da aranha e do mouse): **Ctrl+Alt+Shift+Q**
-(configurável) — ou `taskkill /IM spiderdesk.exe /F`.
+Cada mob tem cérebro, rota e animação próprios; clicar mata só o mob sob o cursor. Clicar no
+painel nunca mata um mob que esteja atrás dele (só contam cliques recebidos pelo overlay).
 
-Linha de comando:
+## Linha de comando
 
 | Opção | O que faz |
 |---|---|
-| `--poc` | Prova de conceito: cubo 3D transparente com click-through, sem aranha |
+| `--spawn a,b,...` | Spawna mobs ao iniciar (rótulo do painel, nome do arquivo ou índice) |
+| `--list-mobs` | Lista os tipos de mob e sai |
+| `--no-panel` | Não abre o painel flutuante |
+| `--poc` | Prova de conceito: cubo 3D transparente com click-through, sem mobs |
 | `--list-windows` | Lista as janelas detectadas (bordas visíveis × brutas) e sai — não precisa de GPU |
-| `--screenshot arq.png` | Salva um quadro renderizado (RGBA) + estatística de alfa e sai |
-| `--auto-kill N` | Teste: simula um clique na aranha após N s (e a cada reaparecimento) |
+| `--screenshot arq.png` | Salva um quadro do overlay (e `arq.panel.png` do painel) + estatística de alfa e sai |
+| `--auto-kill N` / `--panel-selftest` | Testes: clique simulado num mob a cada N s / aciona os botões do painel |
 | `--timeout N` | Encerra sozinho após N segundos |
 | `--config arq.toml` | Usa outro arquivo de configuração |
 | `--print-config` | Mostra a configuração efetiva |
@@ -42,11 +102,24 @@ scripts/package-windows.sh                   # gera dist/spiderdesk-windows/ (ex
 ```
 O linker do alvo está em [.cargo/config.toml](.cargo/config.toml).
 
-### Desenvolvimento em Linux
+### Linux (GNOME/KDE, Wayland ou X11)
 
-`cargo run` funciona (usa um desktop simulado em [src/platform/fallback.rs](src/platform/fallback.rs)),
-útil para depurar render, animação e comportamento. `cargo test`, `cargo clippy` e `cargo fmt`
-rodam em qualquer SO.
+```bash
+cargo build --release && ./target/release/spiderdesk --spawn wolf_spider,rat
+```
+
+* **Sempre no topo:** o Wayland não permite que um app fique acima dos outros (o GNOME não tem
+  protocolo para isso). Por isso, numa sessão Wayland com XWayland o SpiderDesk usa **X11
+  automaticamente**, onde o gerenciador de janelas respeita `_NET_WM_STATE_ABOVE`; o app reafirma
+  isso a cada 1 s para o overlay e o painel. Para forçar Wayland nativo (perde o "sempre no topo"):
+  `SPIDERDESK_WAYLAND=1`.
+* **Click-through no X11:** o winit não suporta `hit_test` no X11; o SpiderDesk define a **região de
+  entrada** da janela (extensão SHAPE) como os quadrados dos mobs. O resto da tela atravessa
+  para os apps; só o mob recebe o clique. O cursor global vem de `QueryPointer`, então a fuga do
+  cursor funciona.
+* Sem o Windows, a lista de janelas é simulada ([src/platform/fallback.rs](src/platform/fallback.rs)):
+  os mobs andam pelas bordas da tela e de 3 janelas fictícias, não pelas suas janelas reais.
+* `cargo test`, `cargo clippy` e `cargo fmt` rodam em qualquer SO.
 
 ## Como funciona
 
@@ -60,6 +133,8 @@ src/
 ├── navigation/       geometria, grafo de caminhos, A*, locomoção (lógica pura)
 ├── creature/         comportamento (máquina de estados), animação, aranha procedural, GLB, efeitos
 ├── game/             pontuação
+├── mobs.rs           catálogo de tipos, spawn/matar/remover (vários mobs)
+├── panel.rs          janela flutuante de spawn (Bevy UI)
 ├── capture.rs        --screenshot       diagnostics.rs  métricas       poc.rs  modo PoC
 config/models/        presets (yaw) para os GLBs de animais testados
 tools/make_test_glb.py  gera um GLB sintético de teste
@@ -164,7 +239,7 @@ Principais: `overlay.fps_limit`, `overlay.emergency_hotkey`, `spider.scale/speed
 
 | Verificação | Resultado |
 |---|---|
-| `cargo test` | **115 testes passam** (100 unitários + 7 cenários de desktop + 7 simulações + 1 de configuração) |
+| `cargo test` | **120 testes passam** (105 unitários + 7 cenários de desktop + 7 simulações + 1 de configuração) |
 | `cargo fmt --check`, `cargo clippy --all-targets` (Linux) e `--target x86_64-pc-windows-gnu` | `Finished`, **0 avisos** nos dois alvos, sobre o código final |
 | `cargo check` e `cargo build --release --target x86_64-pc-windows-gnu` | OK (gera `spiderdesk.exe`, ~64 MB) — a única validação de compilação do módulo Win32 |
 | **Wine** (somente *smoke*, **não** é validação do Windows) | `spiderdesk.exe --help` e `--print-config` OK; `--list-windows` executa `EnumWindows`/DPI sem falhar (0 janelas, esperado num prefixo vazio) |
@@ -173,6 +248,9 @@ Principais: `overlay.fps_limit`, `overlay.emergency_hotkey`, `spider.scale/speed
 | GLB sintético (`tools/make_test_glb.py`) e GLB corrompido | carga + fallback de clipes OK; corrompido → erro registrado e aranha procedural assume |
 | **5 animais reais** (lobo-aranha rigado, formiga, barata, gafanhoto, rato) | todos carregam, renderizam texturizados, com `AnimationPlayer` ligado, escala/posição automáticas e orientação correta com o preset de `config/models/` (veja [assets/models/README.md](assets/models/README.md)) |
 | Ciclo morte→respawn no **app real** (`--auto-kill`, lobo-aranha) | clique → pontos com bônus de sequência (+100, +125, +150) → atividade `Hidden` (4 Hz) → reaparece no tempo configurado |
+| **Vários mobs** no app real (`--spawn` com 7 tipos, 8 mobs simultâneos) | todos andam/animam ao mesmo tempo, cada GLB carregado uma vez por tipo, sem erros de ECS |
+| **Painel flutuante** (`--screenshot` + `--panel-selftest`) | renderiza transparente/semitransparente; cada botão aciona o comando certo (6 spawns → "Matar todos" = 7 abates → "Remover todos"). **Não testado:** o clique físico do mouse no painel — nesta sessão Wayland o `xdotool` move o cursor mas não entrega cliques a nenhuma janela |
+| Modelos com textura **JPEG** (Meshy/Hitem3d) | falhavam (`invalid image mime type: image/jpeg`); corrigido com a feature `jpeg` do Bevy |
 | Simulação de 10 min simulados | aranha sempre sobre uma superfície, sem NaN, dentro da tela |
 
 Cobertura dos cenários obrigatórios **no nível da lógica** (automatizada): 5 (mover janela →

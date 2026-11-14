@@ -13,14 +13,17 @@ use super::animation::{
 };
 use super::behavior::{Brain, BrainInput, SpiderState};
 use super::effects::{EffectAssets, EffectsActive, spawn_burst};
+use super::glb::PendingModel;
 use crate::config::Config;
 use crate::desktop::Desktop;
-use crate::game::Score;
+use crate::game::{Progress, Score, Strike};
 use crate::navigation::geometry::Rect;
 use crate::navigation::pathfinding::{choose_destination, random_point};
 use crate::navigation::walker::Walker;
 use crate::navigation::window_graph::PathGraph;
 use crate::overlay::{Activity, CursorState, HitCircle, HitTargets, OverlayGeometry};
+
+const HURT_FLASH_SECS: f32 = 0.15;
 
 /// Tamanho de 1 unidade local do modelo em pixels (com `spider.scale = 1`).
 pub const PX_PER_UNIT: f32 = 28.0;
@@ -57,6 +60,15 @@ pub struct SpiderSim {
     pub game_time: f32,
     pub pending_burst: Option<Vec2>,
     pub kills_logged: u32,
+    /// Vida atual e maxima (`combat.mob_hp`).
+    pub hp: f32,
+    pub max_hp: f32,
+    /// Golpe nao letal a entregar ao cerebro no proximo passo.
+    hurt_pending: bool,
+    /// Tempo restante do "tranco" visual de um golpe nao letal.
+    pub hurt_flash: f32,
+    /// `game_time` do ultimo golpe (barra de vida fica visivel por um tempo).
+    pub last_hit: Option<f32>,
 }
 
 impl SpiderSim {
@@ -76,6 +88,11 @@ impl SpiderSim {
             game_time: 0.0,
             pending_burst: None,
             kills_logged: 0,
+            hp: 10.0,
+            max_hp: 10.0,
+            hurt_pending: false,
+            hurt_flash: 0.0,
+            last_hit: None,
         }
     }
 
@@ -95,6 +112,27 @@ impl SpiderSim {
     pub fn hittable(&self) -> bool {
         self.visible && self.brain.state().is_alive_free()
     }
+
+    /// Golpe do jogador com a espada atual: tira vida; se zerar, mata (pontos + animacao).
+    pub fn take_hit(&mut self, progress: &mut Progress, cfg: &Config) -> Strike {
+        let strike = progress.strike(&mut self.hp, &cfg.combat);
+        self.last_hit = Some(self.game_time);
+        if strike.killed {
+            self.clicked = true;
+        } else {
+            self.hurt_pending = true;
+            self.hurt_flash = HURT_FLASH_SECS;
+        }
+        strike
+    }
+
+    fn reset_health(&mut self, cfg: &Config) {
+        self.max_hp = cfg.combat.mob_hp;
+        self.hp = self.max_hp;
+        self.last_hit = None;
+        self.hurt_pending = false;
+        self.hurt_flash = 0.0;
+    }
 }
 
 /// Leitura de clique: so conta cliques recebidos pela janela do OVERLAY (um clique no painel
@@ -107,12 +145,17 @@ pub fn read_click(
     geo: Res<OverlayGeometry>,
     opts: Res<crate::overlay::RunOptions>,
     time: Res<Time<Real>>,
-    mut mobs: Query<&mut Mob>,
+    cfg: Res<Config>,
+    mut progress: ResMut<Progress>,
+    mut fx: MessageWriter<crate::hud::HitFx>,
+    mut mobs: Query<&mut Mob, Without<PendingModel>>,
     mut auto_kills_done: Local<u32>,
 ) {
     let overlay = overlay.single().ok();
     let pressed = clicks.read().any(|ev| {
-        ev.button == MouseButton::Left && ev.state == ButtonState::Pressed && Some(ev.window) == overlay
+        ev.button == MouseButton::Left
+            && ev.state == ButtonState::Pressed
+            && Some(ev.window) == overlay
     });
     if !geo.ready {
         return;
@@ -140,7 +183,17 @@ pub fn read_click(
                 .total_cmp(&c.distance(b.sim.body_center))
         });
     if let Some(mut m) = target {
-        m.sim.clicked = true;
+        let sword = progress.sword;
+        let strike = m.sim.take_hit(&mut progress, &cfg);
+        if let Some(new) = strike.upgraded {
+            info!("espada evoluiu: {} (XP {})", new.label(), progress.xp);
+        }
+        fx.write(crate::hud::HitFx {
+            at: m.sim.body_center,
+            radius: m.sim.hit_radius,
+            sword,
+            strike,
+        });
     }
 }
 
@@ -178,6 +231,7 @@ impl SpiderSim {
                 self.placed = true;
                 self.visible = true;
                 self.snap_orientation(cfg);
+                self.reset_health(cfg);
                 events.placed = true;
             }
             return events;
@@ -204,9 +258,12 @@ impl SpiderSim {
             has_route: self.walker.has_route(),
             route_finished: self.route_finished,
             clicked: self.clicked,
+            hurt: self.hurt_pending,
             falling: self.walker.is_falling(),
         };
         self.clicked = false;
+        self.hurt_pending = false;
+        self.hurt_flash = (self.hurt_flash - dt).max(0.0);
         self.route_finished = false;
         let out = self.brain.update(input, &cfg.behavior);
 
@@ -223,6 +280,7 @@ impl SpiderSim {
                 walker.place(p, graph);
                 self.visible = true;
                 self.snap_orientation(cfg);
+                self.reset_health(cfg);
                 events.respawned = true;
             }
         }
@@ -305,7 +363,7 @@ pub fn spider_think(
     desktop: Res<Desktop>,
     cursor: Res<CursorState>,
     effects: Res<EffectsActive>,
-    mut mobs: Query<&mut Mob>,
+    mut mobs: Query<(&mut Mob, Has<PendingModel>)>,
     mut score: ResMut<Score>,
     mut targets: ResMut<HitTargets>,
     mut activity: ResMut<Activity>,
@@ -318,19 +376,24 @@ pub fn spider_think(
     targets.circles.clear();
     let (mut any_visible, mut any_busy) = (false, false);
 
-    for mut mob in &mut mobs {
+    for (mut mob, pending) in &mut mobs {
         let sim = &mut mob.sim;
         let events = sim.step(dt, &desktop.graph, &bounds, cursor.local, &cfg);
         if events.placed || events.respawned {
             debug!(
                 "mob {} em ({:.0}, {:.0})",
-                if events.placed { "posicionado" } else { "reapareceu" },
+                if events.placed {
+                    "posicionado"
+                } else {
+                    "reapareceu"
+                },
                 sim.walker.pos.x,
                 sim.walker.pos.y
             );
         }
         if events.killed {
-            let gained = score.register_kill(sim.game_time, cfg.game.points_per_kill);
+            // relogio global (cada mob tem o seu; a sequencia de abates e do jogador)
+            let gained = score.register_kill(time.elapsed_secs(), cfg.game.points_per_kill);
             sim.kills_logged += 1;
             info!(
                 "mob atingido! +{gained} pontos (total {}, abates {}, sequencia {})",
@@ -339,7 +402,8 @@ pub fn spider_think(
         }
 
         let state = sim.brain.state();
-        if sim.hittable() {
+        // modelo ainda carregando: invisivel, logo nao clicavel
+        if sim.hittable() && !pending {
             targets.circles.push(HitCircle {
                 center: sim.body_center,
                 radius: sim.hit_radius,
@@ -394,6 +458,8 @@ pub fn sync_spider_transform(
             SpiderState::Respawning => scale_mul = ease_out_back(t / 0.7).max(0.01),
             _ => {}
         }
+        // golpe nao letal: encolhe e volta rapido
+        scale_mul *= 1.0 - 0.25 * (sim.hurt_flash / HURT_FLASH_SECS).clamp(0.0, 1.0);
 
         let forward = screen_to_world_dir(sim.walker.heading).normalize_or(Vec3::X);
         let w = geo.local_to_world(sim.walker.pos);
@@ -425,6 +491,11 @@ pub fn spawn_death_effect(
             continue;
         };
         let w = geo.local_to_world(at);
-        spawn_burst(&mut commands, &assets, Vec3::new(w.x, w.y, 0.0), mob.sim.brain.rng());
+        spawn_burst(
+            &mut commands,
+            &assets,
+            Vec3::new(w.x, w.y, 0.0),
+            mob.sim.brain.rng(),
+        );
     }
 }

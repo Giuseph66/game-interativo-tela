@@ -11,7 +11,7 @@
 //!   pressionado (para o "soltar" do clique nao vazar para outro app).
 
 use bevy::prelude::*;
-use bevy::window::{CursorOptions, PrimaryWindow};
+use bevy::window::{CursorOptions, PrimaryWindow, RawHandleWrapper};
 
 use super::window::OverlayGeometry;
 use crate::config::Config;
@@ -45,6 +45,31 @@ impl HitTargets {
             .iter()
             .any(|c| c.center.distance(p) <= c.radius * scale)
     }
+}
+
+/// Estado do click-through por regiao nativa (X11).
+#[derive(Default)]
+pub struct NativeRegion {
+    last: Option<Vec<(i32, i32, u32, u32)>>,
+    unsupported: bool,
+}
+
+/// Quadrados (x, y, largura, altura) que cobrem cada circulo clicavel, em px locais.
+pub fn region_rects(targets: &HitTargets) -> Vec<(i32, i32, u32, u32)> {
+    targets
+        .circles
+        .iter()
+        .map(|c| {
+            let r = c.radius.max(1.0);
+            let side = (2.0 * r).round() as u32;
+            (
+                (c.center.x - r).round() as i32,
+                (c.center.y - r).round() as i32,
+                side,
+                side,
+            )
+        })
+        .collect()
 }
 
 /// Decisao pura do click-through (testavel sem Bevy/Win32).
@@ -94,12 +119,35 @@ pub fn apply_click_through(
     targets: Res<HitTargets>,
     buttons: Res<ButtonInput<MouseButton>>,
     time: Res<Time<Real>>,
-    mut options: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    mut options: Query<(&mut CursorOptions, Option<&RawHandleWrapper>), With<PrimaryWindow>>,
     mut held_since: Local<Option<f32>>,
+    mut native: Local<NativeRegion>,
 ) {
-    let Ok(mut opts) = options.single_mut() else {
+    let Ok((mut opts, handle)) = options.single_mut() else {
         return;
     };
+
+    // X11 (Linux): regiao de entrada nativa = exatamente os circulos dos mobs. O servidor X faz o
+    // teste de clique sozinho; o `hit_test` do winit (sem suporte no X11) nao e usado.
+    if let Some(handle) = handle
+        && !native.unsupported
+    {
+        let rects = if geo.ready {
+            region_rects(&targets)
+        } else {
+            Vec::new()
+        };
+        if native.last.as_ref() != Some(&rects) {
+            if crate::platform::set_input_region(handle, &rects) {
+                native.last = Some(rects);
+            } else {
+                native.unsupported = true; // Windows / Wayland nativo: usa hit_test abaixo
+            }
+        }
+        if !native.unsupported {
+            return;
+        }
+    }
 
     // estado FISICO dos botoes (nao depende de eventos da janela, que podem se perder)
     let mut held = crate::platform::mouse_button_down().unwrap_or_else(|| {
@@ -140,6 +188,16 @@ mod tests {
                 radius: 30.0,
             }],
         }
+    }
+
+    #[test]
+    fn region_rects_cover_each_circle() {
+        assert!(
+            region_rects(&HitTargets::default()).is_empty(),
+            "sem mobs: tudo atravessa"
+        );
+        let r = region_rects(&targets());
+        assert_eq!(r, vec![(470, 370, 60, 60)]);
     }
 
     #[test]

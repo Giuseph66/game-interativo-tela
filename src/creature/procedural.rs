@@ -37,30 +37,30 @@ pub struct ProceduralAssets {
 impl ProceduralAssets {
     pub fn new(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
         let sphere = meshes.add(Sphere::new(0.5).mesh().uv(24, 14));
-    let cylinder = meshes.add(CylinderMeshBuilder::new(0.5, 1.0, 8).build());
+        let cylinder = meshes.add(CylinderMeshBuilder::new(0.5, 1.0, 8).build());
 
-    let body_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.07, 0.06, 0.065),
-        perceptual_roughness: 0.38,
-        metallic: 0.15,
-        ..default()
-    });
-    let leg_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.13, 0.105, 0.09),
-        perceptual_roughness: 0.5,
-        ..default()
-    });
-    let eye_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.9, 0.1, 0.05),
-        emissive: LinearRgba::new(6.0, 0.3, 0.1, 1.0),
-        unlit: true,
-        ..default()
-    });
-    let mark_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.75, 0.08, 0.04),
-        perceptual_roughness: 0.4,
-        ..default()
-    });
+        let body_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.07, 0.06, 0.065),
+            perceptual_roughness: 0.38,
+            metallic: 0.15,
+            ..default()
+        });
+        let leg_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.13, 0.105, 0.09),
+            perceptual_roughness: 0.5,
+            ..default()
+        });
+        let eye_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.9, 0.1, 0.05),
+            emissive: LinearRgba::new(6.0, 0.3, 0.1, 1.0),
+            unlit: true,
+            ..default()
+        });
+        let mark_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.75, 0.08, 0.04),
+            perceptual_roughness: 0.4,
+            ..default()
+        });
         Self {
             sphere,
             cylinder,
@@ -138,6 +138,9 @@ pub fn spawn_procedural(commands: &mut Commands, root: Entity, assets: &Procedur
     commands.entity(root).add_children(&children);
 }
 
+/// Pose de uma perna: (quadril, joelho, pe).
+type LegPoses = [(Vec3, Vec3, Vec3); 8];
+
 /// Pose das 8 pernas (quadril, joelho, pe) de um mob, a partir da simulacao.
 fn leg_poses(sim: &SpiderSim, cfg: &Config, now: f32) -> [(Vec3, Vec3, Vec3); 8] {
     let rest = leg_layout();
@@ -183,7 +186,7 @@ pub fn animate_procedural(
     mobs: Query<&Mob>,
     mut legs: Query<(&LegSegment, &ChildOf, &mut Transform), Without<Abdomen>>,
     mut abdomens: Query<(&ChildOf, &mut Transform), With<Abdomen>>,
-    mut cache: Local<Vec<(Entity, [(Vec3, Vec3, Vec3); 8])>>,
+    mut cache: Local<Vec<(Entity, LegPoses)>>,
 ) {
     let now = time.elapsed_secs();
     // uma pose por mob por quadro (reaproveita a alocacao entre quadros)

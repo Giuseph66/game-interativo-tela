@@ -48,6 +48,10 @@ pub struct RunOptions {
     pub poc: bool,
     /// Nao abre o painel flutuante.
     pub no_panel: bool,
+    /// Teste: aciona os botoes do painel automaticamente.
+    pub panel_selftest: bool,
+    /// Mobs extras a spawnar ao iniciar (rotulos do catalogo ou indices).
+    pub spawn: Vec<String>,
     /// Teste: simula um clique na aranha apos N segundos (e a cada reaparecimento).
     pub auto_kill_secs: Option<f32>,
     /// Salva um quadro renderizado (RGBA) neste arquivo e encerra.
@@ -126,12 +130,14 @@ fn start_emergency(mut commands: Commands, cfg: Res<Config>) {
 
 /// Bate o coracao do watchdog, trata pedidos de saida (atalho global / `--timeout`) e
 /// reafirma "sempre no topo" periodicamente.
+#[allow(clippy::too_many_arguments)]
 fn heartbeat_and_exit(
     cfg: Res<Config>,
     em: Option<Res<EmergencyRes>>,
     opts: Res<RunOptions>,
     time: Res<Time<Real>>,
     windows: Query<Option<&bevy::window::RawHandleWrapper>, With<PrimaryWindow>>,
+    all_windows: Query<(&bevy::window::RawHandleWrapper, &Window)>,
     mut exit: MessageWriter<AppExit>,
     mut last_topmost: Local<f32>,
 ) {
@@ -158,13 +164,17 @@ fn heartbeat_and_exit(
         crate::platform::ensure_overlay_styles(handle, cfg.overlay.layered_alpha_fix);
     }
 
-    // outros programas "sempre no topo" podem passar por cima: reafirma a cada 2 s
-    if elapsed - *last_topmost >= 2.0 {
+    // overlay e painel sempre no topo: reafirma a cada 1 s (outros programas "sempre no topo"
+    // podem passar por cima; no Linux/X11 o pedido inicial do winit chega com a janela oculta e o
+    // gerenciador de janelas o ignora)
+    if elapsed - *last_topmost >= 1.0 {
         *last_topmost = elapsed;
-        if let Ok(Some(handle)) = windows.single()
-            && let Err(e) = crate::platform::keep_on_top(handle)
-        {
-            debug!("keep_on_top: {e}");
+        for (handle, window) in &all_windows {
+            if window.visible
+                && let Err(e) = crate::platform::keep_on_top(handle)
+            {
+                debug!("keep_on_top: {e}");
+            }
         }
     }
 }

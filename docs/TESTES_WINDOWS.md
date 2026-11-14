@@ -63,3 +63,16 @@ Observe também as métricas no log (a cada 30 s): FPS, tempo de consulta/recons
 Casos extras que valem a pena: monitor secundário (só o principal é coberto), jogo em tela cheia
 exclusiva (overlay não aparece), suspender/retomar o PC (o watchdog pode encerrar o app —
 aumente `watchdog_secs` se incomodar), UAC/janelas elevadas (o overlay não cobre a mesa segura).
+
+## 3. Painel de mobs (janela flutuante)
+
+| # | Verificação | Esperado |
+|---|---|---|
+| 3.1 | Ao abrir | Painel no canto superior direito, fundo escuro semitransparente, cantos arredondados, sem bordas do Windows |
+| 3.2 | Clique em `+ rat`, `+ wolf_spider`... | Mob aparece numa borda; contador "Mobs" sobe; log `spawn: ...` |
+| 3.3 | Mob passando **atrás** do painel + clique num botão | O botão funciona e o mob **não** morre |
+| 3.4 | Arrastar pelo título | Painel acompanha o mouse |
+| 3.5 | `_` | Minimiza; volta pela barra de tarefas |
+| 3.6 | Matar todos / Remover todos / Sair | Todos morrem (pontos) / somem / app fecha |
+| 3.7 | Com 30 mobs (`[mobs] max`) | Painel avisa no log ao passar do limite; desktop continua fluido |
+| 3.8 | DPI 125%/150% | Painel proporcional (texto legível, botões cabem) |

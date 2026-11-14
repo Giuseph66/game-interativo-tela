@@ -151,7 +151,10 @@ pub fn spawn_pending_models(
                             .get(handle)
                             .and_then(|g| build_kind_data(g, &mut graphs, &kind.label));
                         if built.is_none() {
-                            error!("\"{}\" nao tem cena; usando a aranha procedural", kind.label);
+                            error!(
+                                "\"{}\" nao tem cena; usando a aranha procedural",
+                                kind.label
+                            );
                             kind.failed = true;
                         }
                         kind.glb = built;

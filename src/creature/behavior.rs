@@ -45,8 +45,10 @@ pub struct BrainInput {
     pub has_route: bool,
     /// A rota terminou neste tick.
     pub route_finished: bool,
-    /// O usuario clicou na aranha neste tick.
+    /// O usuario clicou na aranha neste tick (golpe letal).
     pub clicked: bool,
+    /// Levou um golpe nao letal neste tick: foge do cursor.
+    pub hurt: bool,
     /// Em queda livre (nao planeja rotas).
     pub falling: bool,
 }
@@ -166,6 +168,21 @@ impl Brain {
             self.enter(SpiderState::Hit);
             out.killed = true;
             out.state = self.state;
+            return out;
+        }
+
+        // golpe nao letal: foge sempre (sem sorteio nem cooldown)
+        if inp.hurt && self.state.is_alive_free() {
+            self.timer = cfg.flee_duration_secs;
+            self.enter(SpiderState::Fleeing);
+            self.react_cooldown = cfg.react_cooldown_secs;
+            self.replan_cooldown = REPLAN_COOLDOWN;
+            out.plan = Some(PlanRequest {
+                flee_from_cursor: true,
+            });
+            out.reaction = Some(CursorReaction::Flee);
+            out.state = self.state;
+            out.speed_factor = self.speed_factor(dt, cfg);
             return out;
         }
 
@@ -517,6 +534,26 @@ mod tests {
         // sai e reentra depois do cooldown: reage de novo
         let o = tick(&mut b, &c, 0.05, |i| i.cursor_dist = Some(40.0));
         assert!(o.reaction.is_some());
+    }
+
+    #[test]
+    fn non_lethal_hit_always_flees_even_with_zero_reaction_chance() {
+        let mut c = cfg();
+        c.react_probability = 0.0;
+        let mut b = Brain::new(12);
+        let o = tick(&mut b, &c, 0.05, |i| i.hurt = true);
+        assert_eq!(o.state, SpiderState::Fleeing);
+        assert_eq!(
+            o.plan,
+            Some(PlanRequest {
+                flee_from_cursor: true
+            })
+        );
+        assert!(!o.killed);
+        // morta nao reage a golpe
+        tick(&mut b, &c, 0.05, |i| i.clicked = true);
+        let o = tick(&mut b, &c, 0.05, |i| i.hurt = true);
+        assert_ne!(o.state, SpiderState::Fleeing);
     }
 
     #[test]

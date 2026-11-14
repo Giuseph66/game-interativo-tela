@@ -11,6 +11,7 @@ pub mod creature;
 pub mod desktop;
 pub mod diagnostics;
 pub mod game;
+pub mod hud;
 pub mod mobs;
 pub mod navigation;
 pub mod overlay;

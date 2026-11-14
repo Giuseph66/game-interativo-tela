@@ -29,14 +29,20 @@ bevy = { version = "0.20.1", default-features = false, features = [
     "ui_picking",
     "bevy_ui_widgets",
     "default_font",
+    # espada como cursor
+    "custom_cursor",
     "x11",
     "wayland",
 ] }
 serde = { version = "1", features = ["derive"] }
+raw-window-handle = "0.6"
 toml = "1"
 
+# Linux: X11 (XWayland) para "sempre no topo" + regiao de entrada XShape (click-through)
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["shape"] }
+
 [target.'cfg(windows)'.dependencies]
-raw-window-handle = "0.6"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",

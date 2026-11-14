@@ -216,6 +216,46 @@ impl Default for MobsConfig {
     }
 }
 
+/// Combate: vida dos mobs, dano das espadas e XP para evoluir (madeira -> ferro -> ouro -> diamante).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CombatConfig {
+    pub mob_hp: f32,
+    pub damage_wood: f32,
+    pub damage_iron: f32,
+    pub damage_gold: f32,
+    pub damage_diamond: f32,
+    pub xp_per_hit: u32,
+    pub xp_per_kill: u32,
+    /// O ouro tem o dano do ferro, mas rende mais XP.
+    pub gold_xp_multiplier: f32,
+    /// XP total para desbloquear cada espada.
+    pub xp_iron: u32,
+    pub xp_gold: u32,
+    pub xp_diamond: u32,
+    /// Por quantos segundos a barra de vida fica visivel apos um golpe.
+    pub health_bar_secs: f32,
+}
+
+impl Default for CombatConfig {
+    fn default() -> Self {
+        Self {
+            mob_hp: 10.0,
+            damage_wood: 2.0,
+            damage_iron: 4.0,
+            damage_gold: 4.0,
+            damage_diamond: 8.0,
+            xp_per_hit: 1,
+            xp_per_kill: 10,
+            gold_xp_multiplier: 2.0,
+            xp_iron: 30,
+            xp_gold: 90,
+            xp_diamond: 250,
+            health_bar_secs: 3.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GameConfig {
@@ -253,6 +293,7 @@ pub struct Config {
     pub behavior: BehaviorConfig,
     pub navigation: NavigationConfig,
     pub mobs: MobsConfig,
+    pub combat: CombatConfig,
     pub game: GameConfig,
     pub diagnostics: DiagnosticsConfig,
 }
@@ -348,6 +389,20 @@ impl Config {
             *w = w.clamp(0.0, 1000.0);
         }
 
+        let k = &mut self.combat;
+        k.mob_hp = k.mob_hp.clamp(1.0, 100_000.0);
+        for d in [
+            &mut k.damage_wood,
+            &mut k.damage_iron,
+            &mut k.damage_gold,
+            &mut k.damage_diamond,
+        ] {
+            *d = d.clamp(0.1, 100_000.0);
+        }
+        k.gold_xp_multiplier = k.gold_xp_multiplier.clamp(0.0, 100.0);
+        k.xp_gold = k.xp_gold.max(k.xp_iron);
+        k.xp_diamond = k.xp_diamond.max(k.xp_gold);
+        k.health_bar_secs = k.health_bar_secs.clamp(0.2, 60.0);
         self.mobs.max = self.mobs.max.clamp(1, 200);
         self.mobs.initial = self.mobs.initial.min(self.mobs.max);
 

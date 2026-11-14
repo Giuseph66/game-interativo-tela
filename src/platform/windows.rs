@@ -247,6 +247,14 @@ pub fn ensure_overlay_styles(handle: &bevy::window::RawHandleWrapper, layered_al
     }
 }
 
+/// No Windows o click-through usa `hit_test` (winit/`WS_EX_TRANSPARENT`): nada a fazer aqui.
+pub fn set_input_region(
+    _handle: &bevy::window::RawHandleWrapper,
+    _rects: &[(i32, i32, u32, u32)],
+) -> bool {
+    false
+}
+
 /// Reafirma o estado "sempre no topo" sem ativar a janela nem mexer em posicao/tamanho.
 pub fn keep_on_top(handle: &bevy::window::RawHandleWrapper) -> Result<(), String> {
     let hwnd = hwnd_of(handle)?;

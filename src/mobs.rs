@@ -90,6 +90,21 @@ impl MobCatalog {
         }
     }
 
+    /// Procura um tipo pelo rotulo (sem diferenciar caixa), pelo nome do arquivo ou pelo indice.
+    pub fn find(&self, name: &str) -> Option<usize> {
+        let n = name.trim().to_ascii_lowercase();
+        if let Ok(i) = n.parse::<usize>() {
+            return (i < self.kinds.len()).then_some(i);
+        }
+        self.kinds.iter().position(|k| {
+            k.label.to_ascii_lowercase() == n
+                || matches!(&k.source, MobSource::Glb(p) if Path::new(p)
+                    .file_stem()
+                    .is_some_and(|s| s.to_string_lossy().to_ascii_lowercase() == n))
+                || (n == "procedural" && k.source == MobSource::Procedural)
+        })
+    }
+
     /// Semente distinta (e reprodutivel com `behavior.seed`) para cada mob criado.
     pub fn next_seed(&mut self) -> u64 {
         self.spawned += 1;
@@ -102,7 +117,11 @@ impl MobCatalog {
 /// Monta o catalogo: tipo 0 = aranha procedural; depois cada `assets/models/*.glb` (ordem
 /// alfabetica). Yaw/escala vem do preset de `config/models/*.toml` cujo `spider.model` aponta
 /// para o arquivo; se nao houver, do `[spider]` da configuracao (quando e o mesmo modelo) ou 0/1.
-pub fn discover_kinds(asset_root: Option<&Path>, presets_dir: Option<&Path>, cfg: &Config) -> (Vec<MobKind>, usize) {
+pub fn discover_kinds(
+    asset_root: Option<&Path>,
+    presets_dir: Option<&Path>,
+    cfg: &Config,
+) -> (Vec<MobKind>, usize) {
     let mut kinds = vec![MobKind::procedural()];
 
     // presets: model -> (rotulo, yaw, escala)
@@ -117,8 +136,16 @@ pub fn discover_kinds(asset_root: Option<&Path>, presets_dir: Option<&Path>, cfg
             }
             match Config::load(&p) {
                 Ok(c) => {
-                    let label = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                    presets.push((c.spider.model.clone(), label, c.spider.glb_yaw_deg, c.spider.glb_scale));
+                    let label = p
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    presets.push((
+                        c.spider.model.clone(),
+                        label,
+                        c.spider.glb_yaw_deg,
+                        c.spider.glb_scale,
+                    ));
                 }
                 Err(err) => warn!("preset {} ignorado: {err}", p.display()),
             }
@@ -148,7 +175,12 @@ pub fn discover_kinds(asset_root: Option<&Path>, presets_dir: Option<&Path>, cfg
         let kind = if let Some((_, label, yaw, scale)) = presets.iter().find(|p| p.0 == rel) {
             MobKind::glb(label.clone(), rel.clone(), *yaw, *scale)
         } else if cfg.spider.model == rel {
-            MobKind::glb(stem, rel.clone(), cfg.spider.glb_yaw_deg, cfg.spider.glb_scale)
+            MobKind::glb(
+                stem,
+                rel.clone(),
+                cfg.spider.glb_yaw_deg,
+                cfg.spider.glb_scale,
+            )
         } else {
             MobKind::glb(stem, rel.clone(), 0.0, 1.0)
         };
@@ -170,7 +202,12 @@ pub enum MobCommand {
 }
 
 /// Cria um mob do tipo `kind` (o modelo e anexado por `spawn_pending_models`).
-pub fn spawn_mob(commands: &mut Commands, catalog: &mut MobCatalog, asset_server: &AssetServer, kind: usize) -> Option<Entity> {
+pub fn spawn_mob(
+    commands: &mut Commands,
+    catalog: &mut MobCatalog,
+    asset_server: &AssetServer,
+    kind: usize,
+) -> Option<Entity> {
     let seed = catalog.next_seed();
     let k = catalog.kinds.get_mut(kind)?;
     if let MobSource::Glb(path) = &k.source
@@ -209,11 +246,26 @@ pub fn spawn_initial_mobs(
     for _ in 0..cfg.mobs.initial {
         spawn_mob(&mut commands, &mut catalog, &asset_server, kind);
     }
+    let mut extra = 0u32;
+    for name in &opts.spawn {
+        match catalog.find(name) {
+            Some(k) if cfg.mobs.initial + extra < cfg.mobs.max => {
+                spawn_mob(&mut commands, &mut catalog, &asset_server, k);
+                extra += 1;
+            }
+            Some(_) => warn!("--spawn: limite de {} mobs atingido", cfg.mobs.max),
+            None => warn!("--spawn: tipo \"{name}\" nao existe (veja --list-mobs)"),
+        }
+    }
     info!(
         "{} tipos de mob disponiveis; {} inicial(is) do tipo \"{}\"",
         catalog.kinds.len(),
         cfg.mobs.initial,
-        catalog.kinds.get(kind).map(|k| k.label.as_str()).unwrap_or("?")
+        catalog
+            .kinds
+            .get(kind)
+            .map(|k| k.label.as_str())
+            .unwrap_or("?")
     );
 }
 
@@ -236,7 +288,11 @@ pub fn apply_mob_commands(
                     warn!("limite de {} mobs atingido (mobs.max)", cfg.mobs.max);
                     continue;
                 }
-                let label = catalog.kinds.get(kind).map(|k| k.label.clone()).unwrap_or_default();
+                let label = catalog
+                    .kinds
+                    .get(kind)
+                    .map(|k| k.label.clone())
+                    .unwrap_or_default();
                 if spawn_mob(&mut commands, &mut catalog, &asset_server, kind).is_some() {
                     info!("spawn: {label} ({} na tela)", count + 1);
                 }
@@ -299,7 +355,10 @@ mod tests {
         assert_eq!(kinds[0].source, MobSource::Procedural);
         // ordem alfabetica sem diferenciar caixa: ant, Rat
         assert_eq!(kinds[1].source, MobSource::Glb("models/ant.glb".into()));
-        assert_eq!(kinds[1].yaw_deg, 45.0, "sem preset: usa [spider] quando e o mesmo modelo");
+        assert_eq!(
+            kinds[1].yaw_deg, 45.0,
+            "sem preset: usa [spider] quando e o mesmo modelo"
+        );
         assert_eq!(kinds[2].label, "rato", "rotulo vem do nome do preset");
         assert_eq!((kinds[2].yaw_deg, kinds[2].scale), (90.0, 1.5));
         assert_eq!(default, 1, "spider.model existente vira o tipo padrao");
@@ -310,6 +369,31 @@ mod tests {
         let (kinds, default) = discover_kinds(None, None, &Config::default());
         assert_eq!(kinds.len(), 1);
         assert_eq!(default, 0);
+    }
+
+    #[test]
+    fn find_by_label_file_or_index() {
+        let kinds = vec![
+            MobKind::procedural(),
+            MobKind::glb("rat".into(), "models/Rat.glb".into(), 90.0, 1.0),
+            MobKind::glb(
+                "wolf_spider".into(),
+                "models/wolf_spider_rigged.glb".into(),
+                -90.0,
+                1.0,
+            ),
+        ];
+        let c = MobCatalog::new(kinds, 0, 1);
+        assert_eq!(c.find("RAT"), Some(1));
+        assert_eq!(
+            c.find("wolf_spider_rigged"),
+            Some(2),
+            "pelo nome do arquivo"
+        );
+        assert_eq!(c.find("procedural"), Some(0));
+        assert_eq!(c.find("2"), Some(2));
+        assert_eq!(c.find("9"), None);
+        assert_eq!(c.find("dragao"), None);
     }
 
     #[test]

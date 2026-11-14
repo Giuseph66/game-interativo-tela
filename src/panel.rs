@@ -33,11 +33,11 @@ const MUTED: Color = Color::srgb(0.6, 0.6, 0.66);
 pub struct PanelWindow;
 
 #[derive(Component)]
-struct StatusText;
+pub struct StatusText;
 
 /// Cor-base do botao (para voltar apos hover/press).
 #[derive(Component)]
-struct PanelButton(Color);
+pub struct PanelButton(Color);
 
 /// Altura logica necessaria para `kinds` botoes de spawn.
 pub fn panel_height(kinds: usize) -> f32 {
@@ -128,33 +128,32 @@ pub fn spawn_panel(
             },
         )
         .id();
-    let minimize = button(&mut commands, "_", BTN, 30.0);
-    commands.entity(minimize).observe(
-        |_a: On<Activate>, mut windows: Query<&mut Window, With<PanelWindow>>| {
-            if let Ok(mut w) = windows.single_mut() {
-                w.set_minimized(true);
-            }
-        },
-    );
+    let minimize = button(&mut commands, "_", BTN, 30.0, PanelAction::Minimize);
     commands.entity(title_row).add_children(&[drag, minimize]);
 
     let status = commands
-        .spawn((StatusText, text("Mobs: 0   Abates: 0   Pontos: 0", 13.0, MUTED)))
+        .spawn((
+            StatusText,
+            text("Mobs: 0   Abates: 0   Pontos: 0", 13.0, MUTED),
+        ))
         .id();
-    let label = commands.spawn(text("Clique para spawnar:", 13.0, MUTED)).id();
+    let label = commands
+        .spawn(text("Clique para spawnar:", 13.0, MUTED))
+        .id();
     let mut children = vec![title_row, status, label];
 
     for (i, kind) in catalog.kinds.iter().enumerate() {
-        let b = button(&mut commands, &format!("+  {}", kind.label), BTN, 0.0);
-        commands.entity(b).observe(
-            move |_a: On<Activate>, mut cmds: MessageWriter<MobCommand>| {
-                cmds.write(MobCommand::Spawn(i));
-            },
+        let b = button(
+            &mut commands,
+            &format!("+  {}", kind.label),
+            BTN,
+            0.0,
+            PanelAction::Mob(MobCommand::Spawn(i)),
         );
         children.push(b);
     }
 
-    // acoes em massa
+    // acoes em massa (dois botoes lado a lado)
     let row = commands
         .spawn(Node {
             flex_direction: FlexDirection::Row,
@@ -162,44 +161,30 @@ pub fn spawn_panel(
             ..default()
         })
         .id();
-    let kill = button(&mut commands, "Matar todos", BTN, 0.0);
-    commands.entity(kill).insert(Node {
-        flex_grow: 1.0,
-        height: px(BUTTON_H),
-        justify_content: JustifyContent::Center,
-        align_items: AlignItems::Center,
-        border_radius: BorderRadius::all(px(6)),
-        ..default()
-    });
-    commands
-        .entity(kill)
-        .observe(|_a: On<Activate>, mut cmds: MessageWriter<MobCommand>| {
-            cmds.write(MobCommand::KillAll);
-        });
-    let remove = button(&mut commands, "Remover todos", BTN, 0.0);
-    commands.entity(remove).insert(Node {
-        flex_grow: 1.0,
-        height: px(BUTTON_H),
-        justify_content: JustifyContent::Center,
-        align_items: AlignItems::Center,
-        border_radius: BorderRadius::all(px(6)),
-        ..default()
-    });
-    commands
-        .entity(remove)
-        .observe(|_a: On<Activate>, mut cmds: MessageWriter<MobCommand>| {
-            cmds.write(MobCommand::RemoveAll);
-        });
+    let kill = button(
+        &mut commands,
+        "Matar todos",
+        BTN,
+        -1.0,
+        PanelAction::Mob(MobCommand::KillAll),
+    );
+    let remove = button(
+        &mut commands,
+        "Remover todos",
+        BTN,
+        -1.0,
+        PanelAction::Mob(MobCommand::RemoveAll),
+    );
     commands.entity(row).add_children(&[kill, remove]);
     children.push(row);
 
-    let quit = button(&mut commands, "Sair do SpiderDesk", BTN_DANGER, 0.0);
-    commands
-        .entity(quit)
-        .observe(|_a: On<Activate>, mut cmds: MessageWriter<MobCommand>| {
-            cmds.write(MobCommand::Quit);
-        });
-    children.push(quit);
+    children.push(button(
+        &mut commands,
+        "Sair do SpiderDesk",
+        BTN_DANGER,
+        0.0,
+        PanelAction::Mob(MobCommand::Quit),
+    ));
     children.push(
         commands
             .spawn(text("Emergencia: Ctrl+Alt+Shift+Q", 12.0, MUTED))
@@ -220,15 +205,36 @@ fn text(s: &str, size: f32, color: Color) -> impl Bundle {
     )
 }
 
-/// Botao com texto; `width` 0 = largura total.
-fn button(commands: &mut Commands, label: &str, color: Color, width: f32) -> Entity {
+/// O que um botao do painel faz.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelAction {
+    Mob(MobCommand),
+    Minimize,
+}
+
+/// Botao com texto. `width`: > 0 fixa, 0 = largura total, < 0 = divide a linha (flex).
+fn button(
+    commands: &mut Commands,
+    label: &str,
+    color: Color,
+    width: f32,
+    action: PanelAction,
+) -> Entity {
     commands
         .spawn((
             Button,
             Hovered::default(),
             PanelButton(color),
+            action,
             Node {
-                width: if width > 0.0 { px(width) } else { percent(100) },
+                width: if width > 0.0 {
+                    px(width)
+                } else if width == 0.0 {
+                    percent(100)
+                } else {
+                    auto()
+                },
+                flex_grow: if width < 0.0 { 1.0 } else { 0.0 },
                 height: px(BUTTON_H),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
@@ -238,7 +244,86 @@ fn button(commands: &mut Commands, label: &str, color: Color, width: f32) -> Ent
             BackgroundColor(color),
             children![text(label, 14.0, TEXT)],
         ))
+        .observe(on_panel_activate)
         .id()
+}
+
+/// Um unico observer para todos os botoes: le a `PanelAction` do botao ativado.
+fn on_panel_activate(
+    activate: On<Activate>,
+    actions: Query<&PanelAction>,
+    mut cmds: MessageWriter<MobCommand>,
+    mut windows: Query<&mut Window, With<PanelWindow>>,
+) {
+    match actions.get(activate.entity) {
+        Ok(PanelAction::Mob(c)) => {
+            cmds.write(*c);
+        }
+        Ok(PanelAction::Minimize) => {
+            if let Ok(mut w) = windows.single_mut() {
+                w.set_minimized(true);
+            }
+        }
+        Err(_) => {}
+    }
+}
+
+/// `--panel-selftest`: dispara `Activate` (o mesmo evento de um clique real) nos botoes do painel:
+/// spawna um de cada tipo, depois "Matar todos" e por fim "Remover todos".
+pub fn panel_selftest(
+    mut commands: Commands,
+    opts: Res<crate::overlay::RunOptions>,
+    time: Res<Time<Real>>,
+    geo: Res<OverlayGeometry>,
+    buttons: Query<(Entity, &PanelAction)>,
+    mut step: Local<u32>,
+    mut t0: Local<Option<f32>>,
+) {
+    if !opts.panel_selftest || !geo.ready {
+        return;
+    }
+    let now = time.elapsed_secs();
+    let start = *t0.get_or_insert(now);
+    let spawns: Vec<Entity> = {
+        let mut v: Vec<(usize, Entity)> = buttons
+            .iter()
+            .filter_map(|(e, a)| match a {
+                PanelAction::Mob(MobCommand::Spawn(i)) => Some((*i, e)),
+                _ => None,
+            })
+            .collect();
+        v.sort();
+        v.into_iter().map(|(_, e)| e).collect()
+    };
+    let find = |want: MobCommand| {
+        buttons
+            .iter()
+            .find(|(_, a)| **a == PanelAction::Mob(want))
+            .map(|(e, _)| e)
+    };
+    // agenda: um spawn a cada 0.4 s; matar todos em +4 s; remover todos em +8 s
+    let n = spawns.len() as u32;
+    let target = if *step < n {
+        (now - start >= 1.0 + 0.4 * *step as f32).then(|| spawns[*step as usize])
+    } else if *step == n {
+        (now - start >= 1.0 + 0.4 * n as f32 + 4.0)
+            .then(|| find(MobCommand::KillAll))
+            .flatten()
+    } else if *step == n + 1 {
+        (now - start >= 1.0 + 0.4 * n as f32 + 8.0)
+            .then(|| find(MobCommand::RemoveAll))
+            .flatten()
+    } else {
+        None
+    };
+    if let Some(e) = target {
+        info!(
+            "--panel-selftest: Activate no botao {:?}",
+            buttons.get(e).map(|(_, a)| *a).ok()
+        );
+        commands.trigger(Activate { entity: e });
+        *step += 1;
+    }
 }
 
 /// Depois que o overlay conhece o monitor: escala o painel pelo DPI, posiciona no canto superior
@@ -289,7 +374,9 @@ pub fn update_status(
 }
 
 /// Realce visual de hover/press (poucos botoes: varre todos e so escreve quando muda).
-pub fn button_colors(mut buttons: Query<(&Hovered, Has<Pressed>, &PanelButton, &mut BackgroundColor)>) {
+pub fn button_colors(
+    mut buttons: Query<(&Hovered, Has<Pressed>, &PanelButton, &mut BackgroundColor)>,
+) {
     for (hovered, pressed, base, mut bg) in &mut buttons {
         let want = if pressed {
             BTN_PRESS

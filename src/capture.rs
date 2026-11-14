@@ -16,11 +16,13 @@ pub struct CaptureState {
     requested: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn capture_if_requested(
     mut commands: Commands,
     opts: Res<RunOptions>,
     geo: Res<OverlayGeometry>,
     mobs: Query<&Mob>,
+    panels: Query<Entity, With<crate::panel::PanelWindow>>,
     time: Res<Time<Real>>,
     mut state: Local<CaptureState>,
     mut exit: MessageWriter<AppExit>,
@@ -39,9 +41,17 @@ pub fn capture_if_requested(
     let waited = now - state.ready_at.unwrap_or(now);
     if !state.requested && waited >= 2.5 {
         state.requested = true;
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(move |cap: On<ScreenshotCaptured>| save_with_stats(&cap.image, &path));
+        commands.spawn(Screenshot::primary_window()).observe({
+            let path = path.clone();
+            move |cap: On<ScreenshotCaptured>| save_with_stats(&cap.image, &path)
+        });
+        // o painel flutuante tambem, em <arquivo>.panel.png
+        if let Ok(panel) = panels.single() {
+            let p = path.with_extension("panel.png");
+            commands
+                .spawn(Screenshot::window(panel))
+                .observe(move |cap: On<ScreenshotCaptured>| save_with_stats(&cap.image, &p));
+        }
         for s in mobs.iter().map(|m| &m.sim) {
             info!(
                 "mob na captura: {:?}, direcao {:.2},{:.2}, normal {:.2},{:.2}, velocidade {:.0} px/s",

@@ -19,10 +19,10 @@ use crate::creature::procedural::{ProceduralAssets, animate_procedural};
 use crate::creature::spider::{
     OverlayCamera, read_click, spawn_death_effect, spider_think, sync_spider_transform,
 };
-use crate::mobs::{MobCatalog, MobCommand, apply_mob_commands, discover_kinds, spawn_initial_mobs};
 use crate::desktop::{Desktop, poll_desktop};
 use crate::diagnostics::{Metrics, log_metrics};
 use crate::game::Score;
+use crate::mobs::{MobCatalog, MobCommand, apply_mob_commands, discover_kinds, spawn_initial_mobs};
 use crate::navigation::geometry::Rect;
 use crate::overlay::{OverlayGeometry, OverlayPlugin, OverlaySet, RunOptions, window};
 use crate::{assets, panel, platform, poc};
@@ -37,6 +37,9 @@ pub struct Cli {
     pub screenshot: Option<PathBuf>,
     pub auto_kill_secs: Option<f32>,
     pub no_panel: bool,
+    pub panel_selftest: bool,
+    pub spawn: Vec<String>,
+    pub list_mobs: bool,
     pub print_config: bool,
     pub help: bool,
 }
@@ -51,6 +54,8 @@ OPCOES:
     --config <arquivo>   usa este TOML (padrao: config/default.toml, se existir)
     --poc                prova de conceito: cubo 3D transparente + click-through (sem aranha)
     --no-panel           nao abre o painel flutuante de spawn de mobs
+    --spawn <a,b,...>    spawna mobs ao iniciar pelo nome (veja --list-mobs), ex.: rat,ant,rat
+    --list-mobs          lista os tipos de mob disponiveis e sai
     --list-windows       imprime as janelas detectadas (bordas visiveis) e sai
     --timeout <segs>     encerra sozinho apos N segundos (testes)
     --screenshot <png>   salva um quadro renderizado (RGBA) com estatisticas de alfa e sai
@@ -99,6 +104,18 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
             }
             "--poc" => cli.poc = true,
             "--no-panel" => cli.no_panel = true,
+            "--panel-selftest" => cli.panel_selftest = true,
+            "--list-mobs" => cli.list_mobs = true,
+            "--spawn" => {
+                let v = it
+                    .next()
+                    .ok_or("--spawn exige nomes, ex.: --spawn rat,ant,rat")?;
+                cli.spawn.extend(
+                    v.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty()),
+                );
+            }
             "--list-windows" => cli.list_windows = true,
             "--print-config" => cli.print_config = true,
             "-h" | "--help" => cli.help = true,
@@ -157,6 +174,22 @@ pub fn run(cli: Cli) -> ExitCode {
         list_windows();
         return ExitCode::SUCCESS;
     }
+    if cli.list_mobs {
+        let root = assets::asset_root(&cfg.spider.model);
+        let presets =
+            assets::find_default_config().and_then(|p| p.parent().map(|d| d.join("models")));
+        let (kinds, default) = discover_kinds(root.as_deref(), presets.as_deref(), &cfg);
+        println!("tipos de mob (use o nome em --spawn):");
+        for (i, k) in kinds.iter().enumerate() {
+            let src = match &k.source {
+                crate::mobs::MobSource::Procedural => "procedural".to_string(),
+                crate::mobs::MobSource::Glb(p) => p.clone(),
+            };
+            let mark = if i == default { "  (padrao)" } else { "" };
+            println!("  {i}: {}  [{src}, yaw {}]{mark}", k.label, k.yaw_deg);
+        }
+        return ExitCode::SUCCESS;
+    }
 
     let opts = RunOptions {
         timeout_secs: cli.timeout_secs,
@@ -164,6 +197,8 @@ pub fn run(cli: Cli) -> ExitCode {
         screenshot: cli.screenshot,
         auto_kill_secs: cli.auto_kill_secs,
         no_panel: cli.no_panel,
+        panel_selftest: cli.panel_selftest,
+        spawn: cli.spawn,
     };
     let exit = build_app(cfg, opts).run();
     match exit {
@@ -234,8 +269,8 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
     );
 
     let seed = cfg.behavior.seed;
-    let presets_dir = assets::find_default_config()
-        .and_then(|p| p.parent().map(|d| d.join("models")));
+    let presets_dir =
+        assets::find_default_config().and_then(|p| p.parent().map(|d| d.join("models")));
     let (kinds, default_kind) = discover_kinds(
         Some(std::path::Path::new(&asset_root)),
         presets_dir.as_deref(),
@@ -269,7 +304,10 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
         .insert_resource(Metrics::default())
         .add_plugins(OverlayPlugin)
         .add_message::<MobCommand>()
-        .add_systems(Startup, (setup_scene, spawn_initial_mobs, panel::spawn_panel).chain())
+        .add_systems(
+            Startup,
+            (setup_scene, spawn_initial_mobs, panel::spawn_panel).chain(),
+        )
         .add_systems(
             Update,
             (
@@ -304,7 +342,12 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
         )
         .add_systems(
             Update,
-            (panel::fit_panel, panel::update_status, panel::button_colors)
+            (
+                panel::fit_panel,
+                panel::update_status,
+                panel::button_colors,
+                panel::panel_selftest,
+            )
                 .in_set(OverlaySet::Game),
         );
     }

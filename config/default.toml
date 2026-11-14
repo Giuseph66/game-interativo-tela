@@ -55,6 +55,20 @@ initial = 1                       # mobs ao iniciar (tipo de spider.model ou a a
 max = 30                          # limite de mobs simultaneos
 panel = true                      # painel flutuante para spawnar mobs
 
+[combat]
+mob_hp = 10.0                     # vida de cada mob
+damage_wood = 2.0                 # dano por golpe de cada espada
+damage_iron = 4.0
+damage_gold = 4.0                 # ouro = dano do ferro, mas rende mais XP
+damage_diamond = 8.0
+xp_per_hit = 1
+xp_per_kill = 10
+gold_xp_multiplier = 2.0
+xp_iron = 30                      # XP total para evoluir: madeira -> ferro -> ouro -> diamante
+xp_gold = 90
+xp_diamond = 250
+health_bar_secs = 3.0             # tempo que a barra de vida fica visivel apos um golpe
+
 [game]
 points_per_kill = 100
 
