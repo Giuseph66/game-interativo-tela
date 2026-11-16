@@ -1,0 +1,10 @@
+# Config só para gravar a cena da aranha roubando o mouse (espera 8 s em vez de 20 s).
+[mobs]
+initial = 1
+initial_kind = "aranha"
+[web]
+idle_secs = 8.0
+[hero]
+enabled = false
+[nests]
+enabled = false
