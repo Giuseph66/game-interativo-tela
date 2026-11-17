@@ -18,5 +18,11 @@ cp config/default.toml "$OUT/config/"
 cp -r config/models "$OUT/config/models"
 cp -r assets/. "$OUT/assets/"
 cp README.md docs/TESTES_WINDOWS.md "$OUT/"
+cp scripts/windows-extra/* "$OUT/"   # LEIA-ME + atalhos .bat para quem vai testar
 echo "pronto: $OUT"
 ls -la "$OUT"
+# executavel unico: cursores e configuracao padrao ja vem embutidos; o log vai sozinho para
+# spiderdesk-log.txt ao lado dele
+cp "$OUT/spiderdesk.exe" dist/SpiderDesk.exe
+echo "exe unico: dist/SpiderDesk.exe"
+(cd dist && rm -f spiderdesk-windows.zip && zip -qr -9 spiderdesk-windows.zip spiderdesk-windows && ls -la spiderdesk-windows.zip)

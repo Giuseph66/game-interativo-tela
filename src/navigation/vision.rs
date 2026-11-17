@@ -81,6 +81,35 @@ pub fn luma_from_rgba(rgba: &[u8]) -> Vec<u8> {
         .collect()
 }
 
+/// Brilho de um recorte `(x, y, w, h)` de uma imagem BGRA de 8 bits com `width` pixels por linha
+/// (o formato que o GDI do Windows entrega). Mesmos pesos de [`luma_from_rgba`]. O recorte e
+/// limitado a imagem; vazio se nao sobrar nada.
+pub fn luma_from_bgra_crop(
+    bgra: &[u8],
+    width: usize,
+    (x, y, w, h): (usize, usize, usize, usize),
+) -> Vec<u8> {
+    let height = if width == 0 {
+        0
+    } else {
+        bgra.len() / (width * 4)
+    };
+    let w = w.min(width.saturating_sub(x));
+    let h = h.min(height.saturating_sub(y));
+    let mut out = Vec::with_capacity(w * h);
+    for row in y..y + h {
+        let start = (row * width + x) * 4;
+        out.extend(
+            bgra[start..start + w * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|p| ((p[2] as u32 * 77 + p[1] as u32 * 150 + p[0] as u32 * 29) >> 8) as u8),
+        );
+    }
+    out
+}
+
 /// Encontra os apoios numa imagem de brilho `width` x `height` (linha a linha, de cima para baixo).
 pub fn find_ledges(luma: &[u8], width: usize, height: usize, p: &VisionParams) -> Vec<Ledge> {
     if width < 4 || height < 4 || luma.len() < width * height {
@@ -290,5 +319,37 @@ mod tests {
         ]);
         assert!(l[1] > l[0] && l[0] > l[2]);
         assert_eq!(l[3], 255);
+    }
+
+    #[test]
+    fn bgra_crop_matches_rgba_and_stays_inside_the_image() {
+        // 3x2 BGRA: linha 0 = azul, verde, vermelho; linha 1 = branco, preto, cinza
+        let px = |r: u8, g: u8, b: u8| [b, g, r, 255];
+        let img: Vec<u8> = [
+            px(0, 0, 255),
+            px(0, 255, 0),
+            px(255, 0, 0),
+            px(255, 255, 255),
+            px(0, 0, 0),
+            px(128, 128, 128),
+        ]
+        .concat();
+        let all = luma_from_bgra_crop(&img, 3, (0, 0, 3, 2));
+        let rgba: Vec<u8> = img
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|p| [p[2], p[1], p[0], p[3]])
+            .collect();
+        assert_eq!(all, luma_from_rgba(&rgba));
+        // recorte do meio, 2x1 a partir de (1, 1): preto, cinza
+        assert_eq!(
+            luma_from_bgra_crop(&img, 3, (1, 1, 2, 1)),
+            vec![all[4], all[5]]
+        );
+        // recorte maior que a imagem e cortado; fora dela, vazio
+        assert_eq!(luma_from_bgra_crop(&img, 3, (2, 0, 10, 10)).len(), 2);
+        assert!(luma_from_bgra_crop(&img, 3, (5, 0, 2, 2)).is_empty());
+        assert!(luma_from_bgra_crop(&[], 0, (0, 0, 2, 2)).is_empty());
     }
 }

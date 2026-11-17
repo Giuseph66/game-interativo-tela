@@ -82,9 +82,35 @@ pub fn health_color(frac: f32) -> Color {
     }
 }
 
+/// Cursor da espada a partir do PNG embutido no executavel; se ele nao decodificar (nao deve
+/// acontecer), cai para o arquivo em `assets/`.
+fn sword_cursor(
+    sword: Sword,
+    images: &mut Assets<Image>,
+    asset_server: &AssetServer,
+) -> Handle<Image> {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
+    match Image::from_buffer(
+        sword.cursor_png(),
+        ImageType::Extension("png"),
+        CompressedImageFormats::NONE,
+        true,
+        ImageSampler::Default,
+        RenderAssetUsages::default(),
+    ) {
+        Ok(image) => images.add(image),
+        Err(e) => {
+            warn!("cursor embutido {:?} invalido ({e}); usando assets/", sword);
+            asset_server.load(sword.cursor_path())
+        }
+    }
+}
+
 pub fn setup_hud(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
     opts: Res<crate::overlay::RunOptions>,
     cameras: Query<Entity, With<OverlayCamera>>,
 ) {
@@ -93,7 +119,7 @@ pub fn setup_hud(
     }
     let cursors = Sword::ALL
         .iter()
-        .map(|s| (*s, asset_server.load(s.cursor_path())))
+        .map(|s| (*s, sword_cursor(*s, &mut images, &asset_server)))
         .collect();
     commands.insert_resource(SwordCursors(cursors));
     let Ok(camera) = cameras.single() else {

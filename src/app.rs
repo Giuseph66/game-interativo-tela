@@ -322,6 +322,39 @@ fn wgpu_settings(cfg: &Config) -> WgpuSettings {
 }
 
 /// Monta o aplicativo completo (sem executar).
+/// Windows: grava tambem o log em `spiderdesk-log.txt` ao lado do executavel (ou na pasta
+/// temporaria, se ali nao der para escrever). Assim quem testa so precisa mandar esse arquivo,
+/// mesmo abrindo o `.exe` com duplo clique. Nos outros sistemas o terminal basta.
+fn log_file_layer(_app: &mut App) -> Option<bevy::log::BoxedLayer> {
+    #[cfg(windows)]
+    {
+        use bevy::log::tracing_subscriber::{Layer, fmt};
+        const NAME: &str = "spiderdesk-log.txt";
+        let next_to_exe = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join(NAME)));
+        for path in next_to_exe
+            .into_iter()
+            .chain(std::iter::once(std::env::temp_dir().join(NAME)))
+        {
+            if let Ok(file) = std::fs::File::create(&path) {
+                eprintln!("log tambem em {}", path.display());
+                return Some(
+                    fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(std::sync::Mutex::new(file))
+                        .boxed(),
+                );
+            }
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 pub fn build_app(cfg: Config, opts: RunOptions) -> App {
     platform::prepare_graphics_env();
     let asset_root = assets::asset_root(&cfg.spider.model)
@@ -342,6 +375,7 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
             })
             .set(LogPlugin {
                 filter: "info,wgpu=error,naga=warn,bevy_winit=warn,bevy_render=warn".into(),
+                custom_layer: log_file_layer,
                 ..default()
             }),
     );

@@ -228,6 +228,11 @@ janelas da frente em `$XDG_RUNTIME_DIR/spiderdesk/cap-<id>.png` (pasta 0700, em 
 desligado. Nada sai do computador. `[hero] inside_apps = false` desliga as imagens (ele continua
 andando em janelas e ícones).
 
+**Windows.** Não precisa de nada instalado: uma thread copia as 3 janelas de aplicativo da frente
+com `PrintWindow(PW_RENDERFULLCONTENT)` cerca de uma vez por segundo, recorta a parte visível
+(limites do DWM), converte para brilho e roda a mesma visão. As imagens ficam só em memória
+(nada é gravado em disco) e a cópia para quando o herói é desligado.
+
 **Estado honesto**
 
 * Regras: testes automatizados ([src/game/hero.rs](src/game/hero.rs),
@@ -239,8 +244,9 @@ andando em janelas e ícones).
 * Combate: rodou no app com teclas programadas (7 abates em 36 s, espada até Ouro, 1 morte).
 * **Não verificado:** a extensão na sua sessão real; clicar no painel para dar o foco (no teste o
   foco já estava na janela do jogo); páginas rolando/vídeos; telas com escala diferente de 100%.
-* **Windows:** o herói compila e anda em janelas, mas as imagens das janelas (andar por dentro)
-  **não estão implementadas** lá, e nada foi executado.
+* **Windows:** captura implementada (`PrintWindow`, [src/platform/windows.rs](src/platform/windows.rs))
+  e compila sem avisos, mas **nunca foi executada** num Windows real. Apps que não respondem ao
+  `PrintWindow` (alguns jogos, vídeos protegidos) só ficam sem apoios internos.
 
 ## Barras do sistema (barra superior, barra de tarefas, dock)
 
@@ -321,7 +327,7 @@ cargo build --release && ./target/release/spiderdesk --spawn wolf_spider,rat
     sessão X11): sem saber que janela cobre um ícone, ele viraria caixa invisível.
     `SPIDERDESK_ICONS=1` força, `=0` desliga.
   * **Barra superior do GNOME**, publicada pela extensão.
-  * Não feito: elementos *dentro* dos apps (caixas de texto, botões) e ícones no Windows.
+  * Não feito: ícones da área de trabalho no Windows. (Elementos *dentro* dos apps vêm da visão do herói, nos dois sistemas.)
 * **Pontes de seda** (`[navigation] silk_threads`): cada janela ganha fios verticais dos cantos de
   baixo até a superfície logo abaixo (outra janela ou o chão), desenhados na tela. Ícones ganham
   um fio só, para baixo ou pendurado de cima, o que for mais curto. Sem eles uma janela solta no

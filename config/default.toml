@@ -148,7 +148,9 @@ stomp_bounce = 560.0              # impulso ao pisar num bicho
 contact_damage = 1                # dano de encostar num bicho (elite: o dobro)
 inside_apps = true                # anda nas linhas de texto e bordas DENTRO dos aplicativos
                                   # (GNOME: a extensao salva a imagem das 3 janelas da frente
-                                  # numa pasta privada em memoria, so enquanto o heroi existe)
+                                  # numa pasta privada em memoria, so enquanto o heroi existe;
+                                  # Windows: copia as 3 janelas da frente com PrintWindow ~1x/s,
+                                  # so em memoria, nada vai para o disco)
 min_ledge_px = 24.0               # trechos menores nao viram apoio
 coins = 6                         # moedas espalhadas pelos apoios
 xp_per_coin = 2

@@ -37,6 +37,16 @@ impl Sword {
         }
     }
 
+    /// PNG do cursor embutido no executavel (o `.exe` funciona sozinho, sem a pasta `assets/`).
+    pub fn cursor_png(self) -> &'static [u8] {
+        match self {
+            Sword::Wood => include_bytes!("../../assets/cursors/sword_wood.png"),
+            Sword::Iron => include_bytes!("../../assets/cursors/sword_iron.png"),
+            Sword::Gold => include_bytes!("../../assets/cursors/sword_gold.png"),
+            Sword::Diamond => include_bytes!("../../assets/cursors/sword_diamond.png"),
+        }
+    }
+
     pub fn damage(self, c: &CombatConfig) -> f32 {
         match self {
             Sword::Wood => c.damage_wood,

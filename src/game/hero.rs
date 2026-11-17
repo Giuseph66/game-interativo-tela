@@ -82,7 +82,7 @@ impl Platform {
 }
 
 /// Apoios encontrados na imagem de uma janela (coordenadas da imagem).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct WindowLedges {
     pub ledges: Vec<Ledge>,
     pub image_size: (u32, u32),

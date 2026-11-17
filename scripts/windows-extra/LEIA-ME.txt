@@ -1,0 +1,40 @@
+﻿SPIDERDESK - TESTE NO WINDOWS
+=============================
+
+Bichos 3D que andam por cima das janelas abertas. É a primeira vez rodando num Windows de
+verdade, então pode dar problema - e é justamente isso que quero descobrir.
+
+COMO RODAR
+(Se você recebeu só o SpiderDesk.exe, basta dar duplo clique nele.)
+1. Extraia o zip inteiro numa pasta (não rode de dentro do zip).
+2. Dê duplo clique em 0_TESTE_TRANSPARENCIA.bat
+   Deve aparecer um cubo 3D girando SOBRE a área de trabalho, com o fundo transparente.
+   Se aparecer tela preta, nada ou piscando: anote e me mande o spiderdesk-log.txt.
+3. Dê duplo clique em 1_RODAR.bat
+   Aparecem alguns bichos e um painel no canto superior direito.
+
+O Windows pode avisar "O Windows protegeu o computador" (o .exe não é assinado):
+clique em "Mais informações" > "Executar assim mesmo".
+
+COMO SAIR
+Ctrl+Alt+Shift+Q (de qualquer janela) ou o botão "Sair do SpiderDesk" no painel.
+Se travar: Gerenciador de Tarefas > spiderdesk.exe > Finalizar tarefa.
+
+O QUE TESTAR (me conte o que funcionou e o que não funcionou)
+- Os bichos andam nas bordas das janelas (Chrome, VS Code, Explorador de Arquivos)?
+- Clicar fora dos bichos chega normalmente no aplicativo de baixo?
+- Clicar num bicho mata ele (e o clique NÃO passa para o aplicativo de baixo)?
+- Mover, minimizar ou maximizar uma janela: os bichos acompanham ou caem?
+- Sacudir uma janela rápido de um lado para o outro: os bichos caem?
+- Deixar o mouse parado por 20 s: uma aranha vem roubar o cursor? Clique para soltar.
+- Herói: clique no painel; depois A/D andam, W pula e Espaço ataca.
+- Herói dentro dos apps: com o herói ligado, deixe o VS Code ou o Chrome perto do chão da
+  tela. Ele deve conseguir pular e pousar nas LINHAS DE TEXTO, botões e imagens (o nome do
+  lugar aparece em cima dele, ex.: "Texto em: ..."). Isso é novo e nunca rodou no Windows.
+  Se ele só ficar no chão ou no topo das janelas, me diga em qual aplicativo.
+- Alt+Tab, telas com escala de 125%/150% e dois monitores.
+
+NO FIM, me mande o spiderdesk-log.txt (fica nesta pasta) e prints ou vídeo do que achar
+estranho. Cada execução sobrescreve o log: mande logo depois do teste que deu problema.
+
+Roteiro detalhado de testes: TESTES_WINDOWS.md

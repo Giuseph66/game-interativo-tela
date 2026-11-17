@@ -1,7 +1,8 @@
 //! Integracao Win32. Unico modulo do projeto com `unsafe`; cada bloco documenta sua garantia.
 //!
-//! Nenhuma API aqui exige privilegios de administrador. Nada le o conteudo dos aplicativos:
-//! apenas geometria e estado das janelas de topo.
+//! Nenhuma API aqui exige privilegios de administrador. Le geometria e estado das janelas de
+//! topo e, so enquanto o heroi pede, a imagem das 3 janelas da frente (`captures`), que fica em
+//! memoria e vira apenas uma lista de apoios.
 
 use std::ffi::c_void;
 use std::sync::Arc;
@@ -74,20 +75,221 @@ pub fn can_move_cursor() -> bool {
     true
 }
 
-/// Imagens das janelas para o heroi andar por dentro dos apps: ainda nao implementado no
-/// Windows (o heroi anda nas janelas, mas nao no conteudo delas).
-pub fn request_window_images(_on: bool) {}
-
-pub fn window_ledges(_id: u64) -> Option<crate::game::hero::WindowLedges> {
-    None
+/// Liga/desliga as imagens das janelas (o heroi andando por dentro dos apps).
+pub fn request_window_images(on: bool) {
+    captures::request(on);
 }
 
+/// Apoios vistos por dentro da janela `id` (da ultima imagem analisada), se houver.
+pub fn window_ledges(id: u64) -> Option<crate::game::hero::WindowLedges> {
+    captures::ledges(id)
+}
+
+/// Muda sempre que os apoios de alguma janela mudam (ou somem).
 pub fn window_ledges_version() -> u64 {
-    0
+    captures::version()
 }
 
-/// Nada a desfazer na saida.
-pub fn shutdown() {}
+/// Na saida: para de copiar janelas (a thread fica ociosa ate o processo terminar).
+pub fn shutdown() {
+    captures::request(false);
+}
+
+/// Imagens das janelas para o heroi andar por dentro dos apps.
+///
+/// Uma thread copia as `FRONT_WINDOWS` janelas de aplicativo da frente com
+/// `PrintWindow(PW_RENDERFULLCONTENT)` (funciona com Chrome, VS Code e outros apps desenhados
+/// pela GPU, Windows 8.1+), recorta a parte visivel (limites do DWM, sem a borda invisivel),
+/// converte para brilho e procura os apoios (`navigation::vision`). Tudo fica em memoria: nenhuma
+/// imagem e gravada em disco e nada sai do computador. So roda enquanto o heroi pede.
+mod captures {
+    use std::collections::HashMap;
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC,
+        DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC, SelectObject,
+    };
+    use windows::Win32::Storage::Xps::{PRINT_WINDOW_FLAGS, PrintWindow};
+    use windows::Win32::UI::WindowsAndMessaging::PW_RENDERFULLCONTENT;
+
+    use crate::game::hero::WindowLedges;
+    use crate::navigation::geometry::Rect;
+    use crate::navigation::vision::{VisionParams, find_ledges, luma_from_bgra_crop};
+    use crate::platform::DesktopWindow;
+
+    /// Quantas janelas da frente sao copiadas (as de tras quase nao aparecem).
+    const FRONT_WINDOWS: usize = 3;
+    /// Intervalo entre rodadas de copia.
+    const PERIOD: Duration = Duration::from_millis(1000);
+    /// Janelas maiores que isso (em qualquer lado) sao ignoradas.
+    const MAX_SIDE: i32 = 8192;
+    /// Menor recorte que vale analisar.
+    const MIN_SIDE: i32 = 16;
+
+    static REQUESTED: AtomicBool = AtomicBool::new(false);
+    static VERSION: AtomicU64 = AtomicU64::new(0);
+
+    fn cache() -> &'static Mutex<HashMap<u64, WindowLedges>> {
+        static CACHE: OnceLock<Mutex<HashMap<u64, WindowLedges>>> = OnceLock::new();
+        CACHE.get_or_init(Default::default)
+    }
+
+    pub fn version() -> u64 {
+        VERSION.load(Ordering::Relaxed)
+    }
+
+    pub fn ledges(id: u64) -> Option<WindowLedges> {
+        cache().lock().ok()?.get(&id).cloned()
+    }
+
+    pub fn request(on: bool) {
+        REQUESTED.store(on, Ordering::Relaxed);
+        static STARTED: OnceLock<()> = OnceLock::new();
+        if on {
+            STARTED.get_or_init(|| {
+                let spawned = std::thread::Builder::new()
+                    .name("spiderdesk-vision".into())
+                    .spawn(|| {
+                        loop {
+                            if REQUESTED.load(Ordering::Relaxed) {
+                                refresh();
+                            } else {
+                                clear();
+                            }
+                            std::thread::sleep(PERIOD);
+                        }
+                    });
+                if let Err(e) = spawned {
+                    bevy::log::warn!("imagens das janelas indisponiveis: {e}");
+                }
+            });
+        }
+    }
+
+    fn clear() {
+        if let Ok(mut c) = cache().lock()
+            && !c.is_empty()
+        {
+            c.clear();
+            VERSION.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn refresh() {
+        let windows =
+            super::list_windows(Rect::from_xywh(0.0, 0.0, 0.0, 0.0), super::current_pid());
+        let front: Vec<&DesktopWindow> = windows.iter().take(FRONT_WINDOWS).collect();
+        // copia e analisa fora do cadeado (dezenas de ms por janela)
+        let fresh: Vec<(u64, WindowLedges)> = front
+            .iter()
+            .filter_map(|w| Some((w.id, capture(w)?)))
+            .collect();
+        let Ok(mut c) = cache().lock() else { return };
+        let before = c.len();
+        c.retain(|id, _| front.iter().any(|w| w.id == *id));
+        let mut changed = c.len() != before;
+        for (id, seen) in fresh {
+            if c.get(&id) != Some(&seen) {
+                c.insert(id, seen);
+                changed = true;
+            }
+        }
+        if changed {
+            VERSION.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Apoios da parte visivel da janela `w` (coordenadas do recorte = `w.rect`).
+    fn capture(w: &DesktopWindow) -> Option<WindowLedges> {
+        let raw = w.raw_rect;
+        let (rw, rh) = (raw.width().round() as i32, raw.height().round() as i32);
+        if !(MIN_SIDE..=MAX_SIDE).contains(&rw) || !(MIN_SIDE..=MAX_SIDE).contains(&rh) {
+            return None;
+        }
+        // parte visivel (limites do DWM) dentro do retangulo bruto, que tem bordas invisiveis
+        let cx = ((w.rect.min.x - raw.min.x).round() as i32).clamp(0, rw - 1);
+        let cy = ((w.rect.min.y - raw.min.y).round() as i32).clamp(0, rh - 1);
+        let cw = (w.rect.width().round() as i32).min(rw - cx);
+        let ch = (w.rect.height().round() as i32).min(rh - cy);
+        if cw < MIN_SIDE || ch < MIN_SIDE {
+            return None;
+        }
+        let bgra = print_window(HWND(w.id as usize as *mut c_void), rw, rh)?;
+        let crop = (cx as usize, cy as usize, cw as usize, ch as usize);
+        let luma = luma_from_bgra_crop(&bgra, rw as usize, crop);
+        let (cw, ch) = (cw as usize, ch as usize);
+        if luma.len() != cw * ch {
+            return None;
+        }
+        Some(WindowLedges {
+            ledges: find_ledges(&luma, cw, ch, &VisionParams::default()),
+            image_size: (cw as u32, ch as u32),
+        })
+    }
+
+    /// Copia a janela inteira (`w` x `h`, retangulo de `GetWindowRect`) como BGRA de cima para
+    /// baixo. `None` se o app nao deixar ou a janela sumir no meio.
+    fn print_window(hwnd: HWND, w: i32, h: i32) -> Option<Vec<u8>> {
+        // SAFETY: todos os objetos GDI sao criados e destruidos aqui, nesta thread; o bitmap e
+        // tirado do DC de memoria antes do `GetDIBits` (exigencia da API) e o buffer tem
+        // exatamente `w * h * 4` bytes para as `h` linhas de 32 bits pedidas. Um HWND que deixou
+        // de existir so faz o `PrintWindow` falhar.
+        unsafe {
+            let screen = GetDC(None);
+            if screen.is_invalid() {
+                return None;
+            }
+            let mem = CreateCompatibleDC(Some(screen));
+            let bmp = CreateCompatibleBitmap(screen, w, h);
+            let mut out = None;
+            if !mem.is_invalid() && !bmp.is_invalid() {
+                let old = SelectObject(mem, HGDIOBJ(bmp.0));
+                let ok = PrintWindow(hwnd, mem, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)).as_bool();
+                SelectObject(mem, old);
+                if ok {
+                    let mut info = BITMAPINFO {
+                        bmiHeader: BITMAPINFOHEADER {
+                            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                            biWidth: w,
+                            biHeight: -h, // negativo = linhas de cima para baixo
+                            biPlanes: 1,
+                            biBitCount: 32,
+                            biCompression: BI_RGB.0,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    };
+                    let mut buf = vec![0u8; w as usize * h as usize * 4];
+                    let lines = GetDIBits(
+                        screen,
+                        bmp,
+                        0,
+                        h as u32,
+                        Some(buf.as_mut_ptr().cast()),
+                        &mut info,
+                        DIB_RGB_COLORS,
+                    );
+                    if lines == h {
+                        out = Some(buf);
+                    }
+                }
+            }
+            if !bmp.is_invalid() {
+                let _ = DeleteObject(HGDIOBJ(bmp.0));
+            }
+            if !mem.is_invalid() {
+                let _ = DeleteDC(mem);
+            }
+            ReleaseDC(None, screen);
+            out
+        }
+    }
+}
 
 /// Area util de cada monitor (sem a barra de tarefas), px fisicos do desktop virtual.
 pub fn work_areas(_screen: Rect) -> Vec<Rect> {
