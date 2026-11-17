@@ -20,6 +20,8 @@ pub struct OverlayGeometry {
     /// Origem do monitor escolhido (pedida). `origin` e onde a janela REALMENTE ficou: com
     /// varias telas o gerenciador de janelas pode coloca-la em outro monitor.
     requested_origin: IVec2,
+    /// Tamanho pedido (o aplicado pode diferir se o sistema arredondar/limitar).
+    requested_size: UVec2,
     /// Monitor principal (origem, tamanho) em pixels fisicos do desktop virtual. O painel fica nele.
     pub primary: Option<(IVec2, UVec2)>,
     attempts: u32,
@@ -34,6 +36,7 @@ impl Default for OverlayGeometry {
             size: UVec2::new(1280, 720),
             monitor_scale: 1.0,
             requested_origin: IVec2::ZERO,
+            requested_size: UVec2::ZERO,
             primary: None,
             attempts: 0,
             stable_frames: 0,
@@ -170,7 +173,7 @@ pub fn fit_overlay_window(
     let target = UVec2::new(full.x.max(64), full.y.saturating_sub(inset).max(64));
 
     // monitor mudou de resolucao/posicao (troca de monitor, docking): refaz
-    if geo.ready && (geo.size != target || geo.requested_origin != origin) {
+    if geo.ready && (geo.requested_size != target || geo.requested_origin != origin) {
         info!(
             "monitor alterado; reajustando overlay para {}x{}",
             target.x, target.y
@@ -186,6 +189,7 @@ pub fn fit_overlay_window(
     geo.attempts += 1;
     geo.origin = origin;
     geo.requested_origin = origin;
+    geo.requested_size = target;
     geo.size = target;
     geo.monitor_scale = mon.scale_factor as f32;
     geo.primary = Some(primary);
@@ -193,12 +197,35 @@ pub fn fit_overlay_window(
     if window.position != WindowPosition::At(origin) {
         window.position = WindowPosition::At(origin);
     }
-    if window.resolution.physical_size() != target {
-        window
-            .resolution
-            .set_physical_resolution(target.x, target.y);
-        geo.stable_frames = 0;
-        return;
+    if geo.attempts == 1 {
+        info!(
+            "monitores: {}; alvo do overlay {}x{} em ({}, {}), escala {:.2}; janela agora {}x{}",
+            monitors.iter().count(),
+            target.x,
+            target.y,
+            origin.x,
+            origin.y,
+            mon.scale_factor,
+            window.resolution.physical_width(),
+            window.resolution.physical_height()
+        );
+    }
+    let actual = window.resolution.physical_size();
+    if actual != target {
+        // o sistema pode arredondar/limitar o tamanho (escala de DPI, janela maior que a tela):
+        // depois de varias tentativas, aceita o que foi aplicado em vez de esperar para sempre
+        if geo.attempts < 90 {
+            window
+                .resolution
+                .set_physical_resolution(target.x, target.y);
+            geo.stable_frames = 0;
+            return;
+        }
+        warn!(
+            "o sistema nao aplicou {}x{} (ficou {}x{}); seguindo com o tamanho atual",
+            target.x, target.y, actual.x, actual.y
+        );
+        geo.size = actual;
     }
 
     // tamanho confere; espera alguns frames para o sistema aplicar de fato

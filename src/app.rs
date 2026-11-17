@@ -31,6 +31,8 @@ use crate::{assets, nests, panel, platform, poc};
 #[derive(Debug, Default, PartialEq)]
 pub struct Cli {
     pub config: Option<PathBuf>,
+    /// `--backend`: sobrescreve `[overlay] backend` (diagnostico de GPU).
+    pub backend: Option<BackendChoice>,
     pub list_windows: bool,
     pub timeout_secs: Option<f32>,
     pub poc: bool,
@@ -57,6 +59,7 @@ USO:
 OPCOES:
     --config <arquivo>   usa este TOML (padrao: config/default.toml, se existir)
     --poc                prova de conceito: cubo 3D transparente + click-through (sem aranha)
+    --backend <b>        auto | dx12 | vulkan (sobrescreve [overlay] backend; diagnostico)
     --no-panel           nao abre o painel flutuante de spawn de mobs
     --spawn <a,b,...>    spawna mobs ao iniciar pelo nome (veja --list-mobs), ex.: rat,ant,rat
     --list-mobs          lista os tipos de mob disponiveis e sai
@@ -111,6 +114,14 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
             }
             "--poc" => cli.poc = true,
             "--no-panel" => cli.no_panel = true,
+            "--backend" => {
+                cli.backend = Some(match it.next().as_deref() {
+                    Some("auto") => BackendChoice::Auto,
+                    Some("dx12") => BackendChoice::Dx12,
+                    Some("vulkan") => BackendChoice::Vulkan,
+                    _ => return Err("--backend exige auto, dx12 ou vulkan".into()),
+                });
+            }
             "--panel-selftest" => cli.panel_selftest = true,
             "--auto-hit" => {
                 let v: f32 = it
@@ -190,6 +201,11 @@ pub fn run(cli: Cli) -> ExitCode {
     if let Some(w) = &warning {
         eprintln!("aviso: {w}");
     }
+    let mut cfg = cfg;
+    if let Some(b) = cli.backend {
+        cfg.overlay.backend = b;
+    }
+    install_panic_log();
 
     if cli.print_config {
         match toml::to_string_pretty(&cfg) {
@@ -321,7 +337,20 @@ fn wgpu_settings(cfg: &Config) -> WgpuSettings {
     s
 }
 
-/// Monta o aplicativo completo (sem executar).
+/// Panico tambem vai para o log (no Windows, o `spiderdesk-log.txt`): o console fecha junto com
+/// o processo e a mensagem padrao (stderr) se perderia.
+fn install_panic_log() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        error!(
+            "PANICO na thread {}: {info}",
+            thread.name().unwrap_or("<sem nome>")
+        );
+        previous(info);
+    }));
+}
+
 /// Windows: grava tambem o log em `spiderdesk-log.txt` ao lado do executavel (ou na pasta
 /// temporaria, se ali nao der para escrever). Assim quem testa so precisa mandar esse arquivo,
 /// mesmo abrindo o `.exe` com duplo clique. Nos outros sistemas o terminal basta.
@@ -355,6 +384,7 @@ fn log_file_layer(_app: &mut App) -> Option<bevy::log::BoxedLayer> {
     }
 }
 
+/// Monta o aplicativo completo (sem executar).
 pub fn build_app(cfg: Config, opts: RunOptions) -> App {
     platform::prepare_graphics_env();
     let asset_root = assets::asset_root(&cfg.spider.model)
@@ -374,12 +404,26 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
                 ..default()
             })
             .set(LogPlugin {
-                filter: "info,wgpu=error,naga=warn,bevy_winit=warn,bevy_render=warn".into(),
+                filter: "info,wgpu=error,naga=warn,bevy_winit=warn,bevy_render=info,bevy_render::view=warn".into(),
                 custom_layer: log_file_layer,
                 ..default()
             }),
     );
 
+    {
+        let backend = cfg.overlay.backend;
+        let poc = opts.poc;
+        app.add_systems(Startup, move || {
+            info!(
+                "SpiderDesk {} em {}/{}; backend pedido: {:?}; modo PoC: {}",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                backend,
+                poc
+            );
+        });
+    }
     let seed = cfg.behavior.seed;
     let heist = crate::web::HeistState::new(seed, &cfg);
     let hero = crate::hero::HeroState::new(seed, &cfg, &opts);

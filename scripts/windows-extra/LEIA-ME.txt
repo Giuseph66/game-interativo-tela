@@ -10,6 +10,8 @@ COMO RODAR
 2. Dê duplo clique em 0_TESTE_TRANSPARENCIA.bat
    Deve aparecer um cubo 3D girando SOBRE a área de trabalho, com o fundo transparente.
    Se aparecer tela preta, nada ou piscando: anote e me mande o spiderdesk-log.txt.
+   Se não aparecer nada: rode também o 2_TESTE_VULKAN.bat e me mande o log de cada um
+   (o log é apagado a cada execução: copie ou renomeie antes de rodar o próximo).
 3. Dê duplo clique em 1_RODAR.bat
    Aparecem alguns bichos e um painel no canto superior direito.
 

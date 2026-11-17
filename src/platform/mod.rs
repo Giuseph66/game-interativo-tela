@@ -321,6 +321,7 @@ impl Emergency {
                 let t0 = *exit_requested_at.get_or_insert_with(Instant::now);
                 if t0.elapsed() > Duration::from_secs(3) {
                     eprintln!("spiderdesk: encerramento forcado (saida normal demorou)");
+                    bevy::log::error!("encerramento forcado (saida normal demorou)");
                     std::process::exit(0);
                 }
             }
@@ -330,6 +331,10 @@ impl Emergency {
                 if Duration::from_millis(now.saturating_sub(last)) > limit {
                     eprintln!(
                         "spiderdesk: laco principal travado; encerrando para nao bloquear o desktop"
+                    );
+                    bevy::log::error!(
+                        "laco principal travado ha mais de {:.0}s; encerrando para nao bloquear o desktop",
+                        limit.as_secs_f32()
                     );
                     std::process::exit(2);
                 }

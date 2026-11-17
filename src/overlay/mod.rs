@@ -145,9 +145,14 @@ fn heartbeat_and_exit(
     all_windows: Query<(&bevy::window::RawHandleWrapper, &Window)>,
     mut exit: MessageWriter<AppExit>,
     mut last_topmost: Local<f32>,
+    mut first_frame_logged: Local<bool>,
 ) {
     let Some(em) = em else { return };
     em.0.beat();
+    if !*first_frame_logged {
+        *first_frame_logged = true;
+        info!("laco principal rodando (primeiro quadro)");
+    }
 
     let elapsed = time.elapsed_secs();
     if em.0.is_requested() {
