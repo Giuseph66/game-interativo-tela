@@ -100,8 +100,10 @@ pub fn window_plugin(cfg: &Config) -> WindowPlugin {
             decorations: false,
             resizable: false,
             focused: false,
-            // so aparece depois de dimensionada e configurada (evita "piscar" em tela cheia)
-            visible: false,
+            // Linux: so aparece depois de dimensionada e configurada (evita "piscar" em tela
+            // cheia). Windows: visivel desde o inicio (ela e transparente e nao recebe cliques):
+            // renderizar no DX12/DirectComposition para uma janela oculta travava o laco.
+            visible: cfg!(windows),
             skip_taskbar: true,
             window_level: WindowLevel::AlwaysOnTop,
             composite_alpha_mode: alpha,

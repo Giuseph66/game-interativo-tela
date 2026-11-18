@@ -411,6 +411,19 @@ pub fn build_app(cfg: Config, opts: RunOptions) -> App {
     );
 
     {
+        use crate::platform::breadcrumbs::{
+            self, EXTRACTED, MAIN_FINISHED, MAIN_STARTED, RENDERED,
+        };
+        app.add_systems(First, || breadcrumbs::bump(&MAIN_STARTED));
+        app.add_systems(Last, || breadcrumbs::bump(&MAIN_FINISHED));
+        if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
+            render_app.add_systems(bevy::render::ExtractSchedule, || {
+                breadcrumbs::bump(&EXTRACTED)
+            });
+            render_app.add_systems(bevy::render::Render, || breadcrumbs::bump(&RENDERED));
+        }
+    }
+    {
         let backend = cfg.overlay.backend;
         let poc = opts.poc;
         app.add_systems(Startup, move || {

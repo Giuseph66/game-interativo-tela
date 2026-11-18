@@ -49,6 +49,12 @@ pub fn prepare_graphics_env() {
         // SAFETY: chamado no inicio de `main`, antes de criar qualquer thread.
         unsafe { std::env::set_var("WGPU_DX12_PRESENTATION_SYSTEM", "Visual") };
     }
+    // nao espera o "frame latency waitable object" antes de cada quadro: com janela ainda nao
+    // composta pelo DWM essa espera pode nao retornar
+    if std::env::var_os("WGPU_DX12_USE_FRAME_LATENCY_WAITABLE_OBJECT").is_none() {
+        // SAFETY: idem.
+        unsafe { std::env::set_var("WGPU_DX12_USE_FRAME_LATENCY_WAITABLE_OBJECT", "None") };
+    }
 }
 
 pub fn current_pid() -> u32 {

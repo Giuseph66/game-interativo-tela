@@ -256,6 +256,37 @@ impl Hotkey {
     }
 }
 
+/// Marcadores do laco (diagnostico): o watchdog conta onde o programa estava ao travar.
+pub mod breadcrumbs {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Quadros do laco principal que comecaram (`First`) e terminaram (`Last`).
+    pub static MAIN_STARTED: AtomicU64 = AtomicU64::new(0);
+    pub static MAIN_FINISHED: AtomicU64 = AtomicU64::new(0);
+    /// Extracoes para o mundo de render e quadros renderizados (`Render`).
+    pub static EXTRACTED: AtomicU64 = AtomicU64::new(0);
+    pub static RENDERED: AtomicU64 = AtomicU64::new(0);
+
+    pub fn bump(counter: &AtomicU64) {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn summary() -> String {
+        let get = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        let (started, finished) = (get(&MAIN_STARTED), get(&MAIN_FINISHED));
+        let where_ = if started > finished {
+            "dentro de um quadro do laco principal (sistemas do jogo/janela)"
+        } else {
+            "entre quadros (esperando o sistema/renderizacao)"
+        };
+        format!(
+            "parado {where_}; quadros iniciados {started}, terminados {finished}, extracoes {}, renderizados {}",
+            get(&EXTRACTED),
+            get(&RENDERED)
+        )
+    }
+}
+
 /// Encerramento de emergencia, independente da aranha e do laco do jogo:
 ///
 /// * thread propria escuta o atalho global (Windows: `RegisterHotKey` + polling de reserva);
@@ -333,8 +364,9 @@ impl Emergency {
                         "spiderdesk: laco principal travado; encerrando para nao bloquear o desktop"
                     );
                     bevy::log::error!(
-                        "laco principal travado ha mais de {:.0}s; encerrando para nao bloquear o desktop",
-                        limit.as_secs_f32()
+                        "laco principal travado ha mais de {:.0}s ({}); encerrando para nao bloquear o desktop",
+                        limit.as_secs_f32(),
+                        breadcrumbs::summary()
                     );
                     std::process::exit(2);
                 }
